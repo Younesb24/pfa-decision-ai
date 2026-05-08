@@ -6,10 +6,8 @@ Idempotent: truncates before loading (safe to re-run).
 
 import os
 import sys
-import glob
-import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
 
 import pandas as pd
 import psycopg2
@@ -87,7 +85,7 @@ def load_csv_to_bronze(conn, csv_path: Path, table_name: str) -> int:
     """Load a single CSV file into a bronze table. Returns row count."""
     columns = TABLE_COLUMNS[table_name]
     source_file = csv_path.name
-    loaded_at = datetime.now(timezone.utc).isoformat()
+    loaded_at = datetime.now(UTC).isoformat()
 
     # Read CSV — all columns as string to preserve raw data
     df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
@@ -180,7 +178,7 @@ def main():
 
     # Summary
     print("\n" + "=" * 60)
-    print(f"📊 SUMMARY")
+    print("📊 SUMMARY")
     print(f"   Tables loaded: {loaded_tables}/{len(CSV_TO_TABLE)}")
     print(f"   Total rows:    {total_rows:,}")
     if skipped:

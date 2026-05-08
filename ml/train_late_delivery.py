@@ -9,18 +9,11 @@ Usage:
 """
 
 import os
-import sys
-import joblib
-import pandas as pd
-import numpy as np
 from datetime import datetime
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    classification_report, f1_score, precision_recall_curve, roc_auc_score
-)
+import joblib
+import pandas as pd
+from sklearn.metrics import classification_report, f1_score, precision_recall_curve, roc_auc_score
 from xgboost import XGBClassifier
 
 # ── Config ──
@@ -181,7 +174,7 @@ def train_model():
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
-    print(f"\n3. Train/test split:")
+    print("\n3. Train/test split:")
     print(f"   Train: {len(X_train):,} rows ({y_train.mean():.2%} positive)")
     print(f"   Test:  {len(X_test):,} rows ({y_test.mean():.2%} positive)")
 
@@ -271,7 +264,7 @@ def train_model():
         "trained_at": datetime.now().isoformat(),
     }
     joblib.dump(metrics, os.path.join(MODEL_DIR, "late_delivery_metrics.joblib"))
-    print(f"   Metrics saved.")
+    print("   Metrics saved.")
 
     return f1
 
@@ -286,5 +279,5 @@ if __name__ == "__main__":
     else:
         print(f"\n{'='*60}")
         print(f"BELOW TARGET: F1={f1:.4f} < {target}")
-        print(f"Consider: more features, hyperparameter tuning, threshold adjustment")
+        print("Consider: more features, hyperparameter tuning, threshold adjustment")
         print(f"{'='*60}")

@@ -10,10 +10,11 @@ Usage:
 
 import os
 import warnings
-import joblib
-import pandas as pd
-import numpy as np
 from datetime import datetime
+
+import joblib
+import numpy as np
+import pandas as pd
 
 warnings.filterwarnings("ignore")
 
@@ -155,7 +156,7 @@ def main():
         "trained_at": datetime.now().isoformat(),
     }
     joblib.dump(forecast_data, os.path.join(MODEL_DIR, "forecast_results.joblib"))
-    print(f"\n4. Results saved to ml/models/forecast_results.joblib")
+    print("\n4. Results saved to ml/models/forecast_results.joblib")
 
     # Summary
     print(f"\n{'='*60}")

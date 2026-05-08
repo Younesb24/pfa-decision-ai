@@ -1,0 +1,59 @@
+version: "3.8"
+
+# PFA Decision AI — One-command deployment
+# Usage: docker-compose up --build
+
+services:
+  # PostgreSQL with Olist data
+  postgres:
+    image: postgres:15-alpine
+    container_name: pfa-postgres
+    environment:
+      POSTGRES_DB: pfa_olist
+      POSTGRES_USER: pfa
+      POSTGRES_PASSWORD: pfa_local_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./data/raw:/data/raw:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pfa -d pfa_olist"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # FastAPI backend
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: pfa-api
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: pfa_olist
+      POSTGRES_USER: pfa
+      POSTGRES_PASSWORD: pfa_local_2026
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./ml/models:/app/ml/models:ro
+
+  # Next.js dashboard
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: pfa-dashboard
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

@@ -1,0 +1,119 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: "Cleaned orders with typed timestamps, delivery_delay_days, and is_late flag"
+    columns:
+      - name: order_id
+        description: "Unique order identifier (PK)"
+        tests:
+          - not_null
+          - unique
+      - name: customer_id
+        tests:
+          - not_null
+      - name: order_status
+        tests:
+          - accepted_values:
+              values: ['delivered', 'shipped', 'canceled', 'unavailable', 'invoiced', 'processing', 'created', 'approved']
+      - name: is_late
+        description: "True if delivered after estimated date"
+
+  - name: stg_order_items
+    description: "Order items with typed price and freight. Grain = one item per order"
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+      - name: product_id
+        tests:
+          - not_null
+      - name: seller_id
+        tests:
+          - not_null
+      - name: price
+        description: "Item price in BRL"
+        tests:
+          - not_null
+      - name: freight_value
+        description: "Freight cost in BRL"
+
+  - name: stg_order_reviews
+    description: "Customer reviews with typed score (1-5) and timestamps"
+    columns:
+      - name: review_id
+        tests:
+          - not_null
+      - name: order_id
+        tests:
+          - not_null
+      - name: review_score
+        description: "Score 1 to 5"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+
+  - name: stg_order_payments
+    description: "Payment records with typed amounts. One order can have multiple payments"
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+      - name: payment_type
+        tests:
+          - accepted_values:
+              values: ['credit_card', 'boleto', 'voucher', 'debit_card', 'not_defined']
+      - name: payment_value
+        tests:
+          - not_null
+
+  - name: stg_products
+    description: "Product catalog with EN category names and computed volume"
+    columns:
+      - name: product_id
+        tests:
+          - not_null
+          - unique
+      - name: product_category_name
+        description: "Category name in English (joined from translation table)"
+
+  - name: stg_sellers
+    description: "Seller registry with normalized city/state"
+    columns:
+      - name: seller_id
+        tests:
+          - not_null
+          - unique
+      - name: seller_state
+        tests:
+          - not_null
+
+  - name: stg_customers
+    description: "Customer registry. customer_id is per-order, customer_unique_id is true dedup key"
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+      - name: customer_unique_id
+        tests:
+          - not_null
+
+  - name: stg_geolocation
+    description: "Deduplicated geolocation — avg lat/lng per zip+city+state"
+    columns:
+      - name: zip_code_prefix
+        tests:
+          - not_null
+
+  - name: stg_product_categories
+    description: "Portuguese to English category name mapping (71 categories)"
+    columns:
+      - name: category_name_pt
+        tests:
+          - not_null
+          - unique
+      - name: category_name_en
+        tests:
+          - not_null

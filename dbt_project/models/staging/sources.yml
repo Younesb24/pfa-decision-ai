@@ -1,0 +1,141 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Raw Olist Brazilian E-Commerce data — loaded as-is from CSV"
+    schema: bronze
+    tables:
+      - name: orders
+        description: "Core orders table — one row per order"
+        columns:
+          - name: order_id
+            description: "Unique order identifier"
+            tests:
+              - not_null
+              - unique
+          - name: customer_id
+            description: "FK to customers table"
+            tests:
+              - not_null
+          - name: order_status
+            description: "Order status (delivered, shipped, canceled, etc.)"
+          - name: order_purchase_timestamp
+            description: "Timestamp when the order was placed (text, needs casting)"
+          - name: order_approved_at
+            description: "Timestamp when payment was approved"
+          - name: order_delivered_carrier_date
+            description: "Timestamp when order was handed to carrier"
+          - name: order_delivered_customer_date
+            description: "Timestamp when customer received the order"
+          - name: order_estimated_delivery_date
+            description: "Estimated delivery date shown to customer at purchase"
+
+      - name: order_items
+        description: "Order items — one row per item in an order"
+        columns:
+          - name: order_id
+            description: "FK to orders"
+            tests:
+              - not_null
+          - name: order_item_id
+            description: "Sequential item number within the order"
+          - name: product_id
+            description: "FK to products"
+            tests:
+              - not_null
+          - name: seller_id
+            description: "FK to sellers"
+            tests:
+              - not_null
+          - name: price
+            description: "Item price in BRL (text, needs casting)"
+          - name: freight_value
+            description: "Freight cost per item in BRL (text, needs casting)"
+
+      - name: order_payments
+        description: "Payment details — one row per payment method per order"
+        columns:
+          - name: order_id
+            description: "FK to orders"
+            tests:
+              - not_null
+          - name: payment_type
+            description: "Payment method (credit_card, boleto, voucher, debit_card)"
+          - name: payment_value
+            description: "Payment amount in BRL (text, needs casting)"
+
+      - name: order_reviews
+        description: "Customer reviews — one row per review"
+        columns:
+          - name: review_id
+            description: "Unique review identifier"
+            tests:
+              - not_null
+          - name: order_id
+            description: "FK to orders"
+            tests:
+              - not_null
+          - name: review_score
+            description: "Score 1-5 (text, needs casting)"
+          - name: review_comment_message
+            description: "Free-text review in Portuguese"
+
+      - name: products
+        description: "Product catalog"
+        columns:
+          - name: product_id
+            description: "Unique product identifier"
+            tests:
+              - not_null
+              - unique
+          - name: product_category_name
+            description: "Category in Portuguese"
+
+      - name: sellers
+        description: "Seller registry"
+        columns:
+          - name: seller_id
+            description: "Unique seller identifier"
+            tests:
+              - not_null
+              - unique
+          - name: seller_city
+            description: "Seller city"
+          - name: seller_state
+            description: "Seller state (2-letter code)"
+
+      - name: customers
+        description: "Customer registry (one row per order, not per unique customer)"
+        columns:
+          - name: customer_id
+            description: "Order-level customer ID (FK from orders)"
+            tests:
+              - not_null
+              - unique
+          - name: customer_unique_id
+            description: "True unique customer identifier (for dedup)"
+          - name: customer_city
+            description: "Customer city"
+          - name: customer_state
+            description: "Customer state (2-letter code)"
+
+      - name: geolocation
+        description: "Brazilian zip code geolocation data"
+        columns:
+          - name: geolocation_zip_code_prefix
+            description: "5-digit zip code prefix"
+          - name: geolocation_lat
+            description: "Latitude (text, needs casting)"
+          - name: geolocation_lng
+            description: "Longitude (text, needs casting)"
+
+      - name: product_category_name_translation
+        description: "Portuguese to English category name mapping"
+        columns:
+          - name: product_category_name
+            description: "Category name in Portuguese"
+            tests:
+              - not_null
+              - unique
+          - name: product_category_name_english
+            description: "Category name in English"

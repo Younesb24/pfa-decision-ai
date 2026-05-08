@@ -1,0 +1,30 @@
+name: 'pfa_olist'
+version: '1.0.0'
+config-version: 2
+
+profile: 'pfa_olist'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  pfa_olist:
+    staging:
+      +schema: silver
+      +materialized: view
+    marts:
+      +schema: gold
+      +materialized: table
+
+vars:
+  # Minimum order date to process (for dev speed)
+  min_order_date: '2016-01-01'
+

@@ -1,0 +1,57 @@
+# ── Data files (downloaded from Kaggle) ──
+data/raw/*.csv
+data/gold.duckdb
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Secrets ──
+.env
+**/.env
+!.env.example
+**/.env.local
+
+# ── dbt ──
+dbt_project/target/
+dbt_project/dbt_packages/
+dbt_project/logs/
+
+# ── Node / Next.js ──
+**/node_modules/
+**/.next/
+**/out/
+**/.turbo/
+
+# ── Docker ──
+pgdata/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── ML artifacts ──
+ml/models/*.joblib
+ml/models/*.pkl
+
+# ── Logs ──
+*.log
+
+# ── Local tool config (machine-specific) ──
+.claude/
+.agent/
+
+# ── Cloned reference repos (kept locally for reading, not part of our project) ──
+research/ecommerce-elt-pipeline/

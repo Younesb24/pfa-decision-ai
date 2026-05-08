@@ -1,0 +1,192 @@
+version: 2
+
+models:
+  # ── DIMENSIONS ──
+
+  - name: dim_date
+    description: "Date dimension with Brazilian holidays. Grain = 1 row per calendar day (2016-09-01 to 2018-12-31). Use date_key (YYYYMMDD integer) to join with fact tables."
+    columns:
+      - name: date_key
+        description: "Surrogate key in YYYYMMDD format (e.g. 20170815). Join target for fct_orders.purchase_date_key and delivery_date_key."
+        tests: [not_null, unique]
+      - name: full_date
+        description: "Calendar date (DATE type)"
+        tests: [not_null]
+      - name: year
+        description: "Calendar year (2016, 2017, 2018)"
+      - name: month
+        description: "Month number 1-12"
+      - name: quarter
+        description: "Quarter 1-4"
+      - name: day_of_week
+        description: "Day of week: 0=Sunday, 6=Saturday"
+      - name: is_weekend
+        description: "True if Saturday or Sunday"
+      - name: is_brazilian_holiday
+        description: "True for major Brazilian national holidays (Ano Novo, Tiradentes, Independência, Natal, etc.)"
+
+  - name: dim_customer
+    description: "Customer dimension. Grain = 1 row per unique customer (deduplicated on customer_unique_id). ~96K rows. Use customer_key for joins to fct_orders."
+    columns:
+      - name: customer_key
+        description: "Surrogate integer key for star schema joins"
+        tests: [not_null, unique]
+      - name: customer_unique_id
+        description: "Natural key — true unique customer identifier across multiple orders"
+        tests: [not_null, unique]
+      - name: customer_state
+        description: "Brazilian state 2-letter code (SP, RJ, MG, etc.). SP has the most customers."
+      - name: customer_city
+        description: "Customer city name (lowercase, trimmed)"
+
+  - name: dim_seller
+    description: "Seller dimension. Grain = 1 row per seller. ~3K rows. Use seller_key for star schema joins."
+    columns:
+      - name: seller_key
+        description: "Surrogate integer key"
+        tests: [not_null, unique]
+      - name: seller_id
+        description: "Natural key — unique seller identifier"
+        tests: [not_null, unique]
+      - name: seller_state
+        description: "Brazilian state code. SP dominates."
+      - name: seller_city
+        description: "Seller city (lowercase, trimmed)"
+
+  - name: dim_product
+    description: "Product dimension with English category names and physical dimensions. Grain = 1 row per product. ~33K rows."
+    columns:
+      - name: product_key
+        description: "Surrogate integer key"
+        tests: [not_null, unique]
+      - name: product_id
+        description: "Natural key — unique product identifier"
+        tests: [not_null, unique]
+      - name: product_category_name
+        description: "Product category in English (e.g. 'health_beauty', 'computers_accessories'). NULL for ~610 products."
+      - name: product_weight_g
+        description: "Product weight in grams. Important feature for delivery delay prediction."
+      - name: product_volume_cm3
+        description: "Computed: length * height * width in cubic centimeters. Used as ML feature."
+
+  - name: dim_geo
+    description: "Geography dimension — deduplicated Brazilian zip codes with avg lat/lng. ~19K rows."
+    columns:
+      - name: geo_key
+        description: "Surrogate integer key"
+        tests: [not_null, unique]
+      - name: zip_code_prefix
+        description: "5-digit Brazilian zip code prefix"
+        tests: [not_null]
+      - name: state
+        description: "Brazilian state code (2 letters)"
+      - name: latitude
+        description: "Average latitude for this zip+city+state combination"
+      - name: longitude
+        description: "Average longitude for this zip+city+state combination"
+
+  # ── FACTS ──
+
+  - name: fct_orders
+    description: "Core fact table. Grain = 1 row per order item (order_id + order_item_id). ~112K rows. Contains financials (price, freight, total), delivery KPIs (delay, is_late, processing/shipping/lead times), and dimension keys for star schema joins."
+    columns:
+      - name: order_id
+        description: "Order identifier. One order can have multiple items (rows)."
+        tests: [not_null]
+      - name: order_item_id
+        description: "Sequential item number within the order (1, 2, 3...)"
+        tests: [not_null]
+      - name: customer_key
+        description: "FK to dim_customer.customer_key"
+      - name: seller_key
+        description: "FK to dim_seller.seller_key"
+      - name: product_key
+        description: "FK to dim_product.product_key"
+      - name: purchase_date_key
+        description: "FK to dim_date.date_key — date when customer placed the order"
+      - name: order_status
+        description: "Current order status: delivered, shipped, canceled, unavailable, invoiced, processing, created, approved"
+        tests: [not_null]
+      - name: price
+        description: "Item price in BRL (Brazilian Real). Does NOT include freight."
+        tests: [not_null]
+      - name: freight_value
+        description: "Freight cost in BRL for this specific item"
+      - name: total_item_value
+        description: "price + freight_value in BRL. Use this for revenue calculations."
+        tests: [not_null]
+      - name: order_total_payment
+        description: "Total payment value for the entire order (sum across all payment methods)"
+      - name: delivery_delay_days
+        description: "Days between actual delivery and estimated delivery. Positive = late. Negative = early. NULL if not yet delivered."
+      - name: is_late
+        description: "Boolean: true if delivered AFTER estimated delivery date. Key input for OTIF KPI."
+      - name: processing_time_days
+        description: "Days from purchase to carrier handoff. Measures seller efficiency."
+      - name: shipping_time_days
+        description: "Days from carrier handoff to customer delivery. Measures logistics efficiency."
+      - name: total_lead_time_days
+        description: "Days from purchase to delivery. Full customer experience metric."
+
+  - name: fct_reviews
+    description: "Review fact table. Grain = 1 row per review. ~99K rows. Includes NPS categorization and comment flag for NLP filtering."
+    columns:
+      - name: review_id
+        description: "Unique review identifier"
+        tests: [not_null]
+      - name: order_id
+        description: "FK to fct_orders.order_id"
+        tests: [not_null]
+      - name: review_score
+        description: "Customer rating 1-5 (1=worst, 5=best). Used for NPS proxy calculation."
+        tests: [not_null]
+      - name: has_comment
+        description: "Boolean: true if review has a text comment (Portuguese). ~59% have comments."
+      - name: nps_category
+        description: "NPS bucket: 'promoter' (score 4-5), 'passive' (score 3), 'detractor' (score 1-2)"
+        tests: [not_null]
+
+  # ── AGGREGATES ──
+
+  - name: agg_daily_ops_kpi
+    description: "Pre-computed daily operational KPIs. Grain = 1 row per day. Use for dashboard charts, LLM narrative generation, and anomaly detection. Contains OTIF rate, AOV, cancellation rate, and delivery timing metrics."
+    columns:
+      - name: order_date
+        description: "Calendar date (DATE type)"
+        tests: [not_null, unique]
+      - name: date_key
+        description: "FK to dim_date.date_key (YYYYMMDD integer)"
+      - name: total_orders
+        description: "Count of distinct orders placed on this date"
+      - name: total_gmv
+        description: "Gross Merchandise Value: sum of (price + freight) for all items on this date, in BRL"
+      - name: aov
+        description: "Average Order Value: total_gmv / total_orders, in BRL. KPI #2 from kpi_catalog."
+      - name: otif_rate
+        description: "On-Time In-Full rate: percentage of delivered orders that arrived on or before estimated date. Target >= 92%. KPI #1."
+      - name: cancellation_rate
+        description: "Percentage of orders canceled on this date. Alert if > 5%. KPI #4."
+      - name: avg_delivery_delay_days
+        description: "Average delivery delay in days (positive = late). Useful for trend analysis."
+      - name: active_sellers
+        description: "Count of distinct sellers with orders on this date"
+      - name: unique_customers
+        description: "Count of distinct customers (by customer_unique_id) on this date"
+
+  - name: agg_seller_scorecard
+    description: "Composite seller risk scorecard. Grain = 1 row per seller. Score 0-100 (higher = riskier). Components: late delivery rate (40%), inverse avg review (30%), volume instability (20%), cancellation rate (10%). KPI #5 from kpi_catalog."
+    columns:
+      - name: seller_id
+        description: "Seller identifier"
+        tests: [not_null, unique]
+      - name: seller_risk_score
+        description: "Composite risk score 0-100. P1 alert if > 80, P2 if > 60. Higher = more problematic seller."
+        tests: [not_null]
+      - name: late_delivery_rate
+        description: "Percentage of delivered orders that arrived late"
+      - name: avg_review_score
+        description: "Average customer review score (1-5) for this seller"
+      - name: volume_cv
+        description: "Coefficient of variation of monthly order volume. Higher = less predictable seller."
+      - name: total_revenue
+        description: "Total revenue (price + freight) from this seller in BRL"

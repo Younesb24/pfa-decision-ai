@@ -136,21 +136,21 @@ def main():
     # Print forecasts
     print("\n3. Next 3 months forecast:")
     print("\n   Orders:")
-    for d, v in zip(forecast_dates, fc_orders):
+    for d, v in zip(forecast_dates, fc_orders, strict=False):
         print(f"   {d.strftime('%Y-%m')}: {max(0, v):,.0f}")
 
     print("\n   Revenue (BRL):")
-    for d, v in zip(forecast_dates, fc_rev):
+    for d, v in zip(forecast_dates, fc_rev, strict=False):
         print(f"   {d.strftime('%Y-%m')}: R${max(0, v):,.0f}")
 
     # Save
     forecast_data = {
         "orders": {
-            "forecast": [{"month": d.strftime("%Y-%m"), "value": max(0, float(v))} for d, v in zip(forecast_dates, fc_orders)],
+            "forecast": [{"month": d.strftime("%Y-%m"), "value": max(0, float(v))} for d, v in zip(forecast_dates, fc_orders, strict=False)],
             "mape": round(mape_orders, 2),
         },
         "revenue": {
-            "forecast": [{"month": d.strftime("%Y-%m"), "value": max(0, float(v))} for d, v in zip(forecast_dates, fc_rev)],
+            "forecast": [{"month": d.strftime("%Y-%m"), "value": max(0, float(v))} for d, v in zip(forecast_dates, fc_rev, strict=False)],
             "mape": round(mape_revenue, 2),
         },
         "trained_at": datetime.now().isoformat(),

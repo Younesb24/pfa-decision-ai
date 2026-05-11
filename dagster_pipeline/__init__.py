@@ -24,8 +24,10 @@ from dagster import Definitions
 
 from .assets import bronze_replay, dbt_models
 from .schedules import ops_refresh_schedule
+from .sensors import ALL_SENSORS
 
 defs = Definitions(
     assets=[bronze_replay, dbt_models],
     schedules=[ops_refresh_schedule],
+    sensors=ALL_SENSORS,
 )

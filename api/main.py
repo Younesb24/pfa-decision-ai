@@ -54,10 +54,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for Next.js frontend
+# CORS for Next.js frontend.
+# Allow both `http://localhost:3000` AND `http://127.0.0.1:3000` — they're
+# different *origins* to the browser even though they resolve to the same
+# host. Without this, any browser tab opened on `127.0.0.1:3000` sees its
+# fetches to `localhost:8000` get blocked, the dashboard's initial data
+# load hangs on the loading screen, and you spend an evening debugging
+# something that should have been a one-line config note.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

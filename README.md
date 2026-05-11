@@ -197,4 +197,4 @@ Tracked in `CLAUDE.md` § *Future Add-ons (post-MVP, after ship)*. Highlights:
 
 ## License
 
-Academic project — PFA 2025/2026.
+UMP ENSA OUJDA — PFA 2025/2026.

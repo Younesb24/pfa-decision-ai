@@ -1,0 +1,7 @@
+# Dagster orchestration runtime — installed alongside api/ for now.
+# Day 14 will move this into a multi-stage Dockerfile so the Dagster service
+# is deployable separately on ECS Fargate.
+dagster>=1.9
+dagster-webserver>=1.9
+psycopg2-binary>=2.9
+python-dotenv>=1.0

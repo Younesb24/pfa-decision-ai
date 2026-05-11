@@ -1,5 +1,6 @@
 .PHONY: up down logs load-bronze dbt-run dbt-test dbt-docs demo clean \
-        install-dev lint type-check test test-all audit-init
+        install-dev lint type-check test test-all audit-init \
+        replay-init replay-tick dagster-dev install-dagster
 
 # ── Docker ──
 up:
@@ -28,6 +29,19 @@ dbt-docs:
 # ── Governance ──
 audit-init:
 	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/audit_log_migration.sql
+
+# ── Replay simulator + Dagster (Day 2) ──
+replay-init:
+	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/replay_state_migration.sql
+
+replay-tick:
+	python scripts/replay_simulator.py
+
+install-dagster:
+	pip install -r dagster_pipeline/requirements.txt
+
+dagster-dev:
+	dagster dev -m dagster_pipeline -p 3001
 
 # ── Python quality ──
 install-dev:

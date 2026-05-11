@@ -61,6 +61,21 @@ export interface AskResult {
   sql: string;
   data: Record<string, unknown>[] | null;
   error: string | null;
+  row_count?: number | null;
+  provider?: string | null;
+  model?: string | null;
+  follow_up_questions?: string[];
+}
+
+/** Replay-simulator state — drives the dashboard's LIVE pill. */
+export interface ReplayState {
+  synthetic_today: string | null;
+  runs_completed: number;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_run_rows: number | null;
+  seconds_since_last_run: number | null;
+  initialised: boolean;
 }
 
 /** Governance — human review decisions on AI surfaces. */

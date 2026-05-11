@@ -59,6 +59,7 @@ import {
   fetchKpiSummary,
   fetchMlMetrics,
   fetchNarrative,
+  fetchReplayState,
   fetchSellers,
 } from "@/lib/api";
 import { useTimeRange } from "@/lib/stores/useTimeRange";
@@ -68,6 +69,7 @@ import type {
   DailyKPI,
   Forecast,
   KPISummary,
+  ReplayState,
   SellerScore,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -91,6 +93,17 @@ const fmtK = (n: number) =>
     : n >= 1_000
     ? `${(n / 1_000).toFixed(1)}k`
     : fmt(n);
+
+/** Compact "Xm ago" / "Xh ago" formatter for the LIVE pill. Returns null
+ *  when the input is missing so the caller can decide whether to render
+ *  a fallback label. */
+function formatRelativeSeconds(s: number | null | undefined): string | null {
+  if (s == null || !Number.isFinite(s)) return null;
+  if (s < 60) return `just now`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
 
 /** Sub-line shown under a KPI tile label. Reflects the actively selected
  *  window when start/end are set, otherwise falls back to the dataset bounds
@@ -139,8 +152,9 @@ export default function Dashboard() {
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [askLoading, setAskLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "operations" | "logistics" | "sellers" | "forecast" | "alerts" | "ask" | "narratives" | "data" | "settings">("overview");
+  const [replayState, setReplayState] = useState<ReplayState | null>(null);
 
-  // Shared time range — drives /kpi/summary + /kpi/daily.
+  // Shared time range — drives /kpi/summary + /kpi/daily + /insights/*.
   const rangeStart = useTimeRange((s) => s.start);
   const rangeEnd = useTimeRange((s) => s.end);
   const setDataAsOf = useTimeRange((s) => s.setDataAsOf);
@@ -149,18 +163,16 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [s, f, c, m, n] = await Promise.all([
+        const [s, f, c, m] = await Promise.all([
           fetchSellers(),
           fetchForecast(),
           fetchCategories(),
           fetchMlMetrics(),
-          fetchNarrative(),
         ]);
         setSellers(s);
         setForecast(f);
         setCategories(c);
         setMlMetrics(m);
-        setNarrative(n);
       } catch (e) {
         console.error(e);
       }
@@ -168,20 +180,25 @@ export default function Dashboard() {
   }, []);
 
   // 2) Time-range-dependent fetches — re-fire when the picker changes.
+  // The narrative + alerts now accept start/end (Day-2 follow-up), so the
+  // briefing actually reflects the selected window instead of being a fixed
+  // 27-month dump.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const range = { start: rangeStart, end: rangeEnd };
-        const [k, d, a] = await Promise.all([
+        const [k, d, a, n] = await Promise.all([
           fetchKpiSummary(range),
           fetchDailyKpis(range),
-          fetchAlerts(),
+          fetchAlerts(range),
+          fetchNarrative(range),
         ]);
         if (cancelled) return;
         setKpi(k);
         setDaily(d);
         setAlerts(a);
+        setNarrative(n);
         // Seed the store's dataAsOf so the picker knows where Olist actually ends.
         if (k.data_as_of) setDataAsOf(k.data_as_of);
       } catch (e) {
@@ -194,13 +211,41 @@ export default function Dashboard() {
     };
   }, [rangeStart, rangeEnd, setDataAsOf]);
 
-  const handleAsk = async () => {
-    if (!askInput.trim()) return;
+  // 3) Replay-state poll — drives the LIVE pill. Fires once on mount then
+  // every 60s. Failures are silent (the pill degrades to "idle"); we don't
+  // want the dashboard to error just because Dagster paused.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const s = await fetchReplayState();
+      if (!cancelled) setReplayState(s);
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const handleAsk = async (override?: string) => {
+    const q = (override ?? askInput).trim();
+    if (!q) return;
     setAskLoading(true);
     setAskResult(null);
-    const r = await askQuestion(askInput);
+    const r = await askQuestion(q);
     setAskResult(r);
     setAskLoading(false);
+    // Fix 2: clear the input after submission so the user sees an empty
+    // search bar with the placeholder, not a stale value that reads as if it
+    // were a hint.
+    setAskInput("");
+  };
+
+  /** Fix 5: clicking a follow-up chip submits it as a new /ask query. */
+  const handleFollowUp = (q: string) => {
+    setAskInput(q);
+    void handleAsk(q);
   };
 
   /* ─── Sidebar nav: update active state, then scroll/focus the right area. ─── */
@@ -332,7 +377,7 @@ export default function Dashboard() {
         <TopBar
           askValue={askInput}
           onAskChange={setAskInput}
-          onAskSubmit={handleAsk}
+          onAskSubmit={() => void handleAsk()}
           askLoading={askLoading}
           status={statusPills}
           period={
@@ -341,6 +386,15 @@ export default function Dashboard() {
                 ? `${rangeStart} → ${rangeEnd}`
                 : `${kpi.period_start} → ${kpi.period_end}`
               : undefined
+          }
+          live={
+            replayState
+              ? {
+                  syntheticToday: replayState.synthetic_today,
+                  lastRefreshLabel: formatRelativeSeconds(replayState.seconds_since_last_run),
+                  initialised: replayState.initialised,
+                }
+              : { syntheticToday: null, lastRefreshLabel: null, initialised: false }
           }
         />
 
@@ -362,16 +416,21 @@ export default function Dashboard() {
               )}
             </div>
             <h1 className="text-display text-3xl xl:text-4xl font-semibold tracking-tight">
-              Marketplace Intelligence
+              Marketplace Decision Cockpit
             </h1>
             <p className="mt-1.5 text-sm text-muted-foreground max-w-xl">
-              AI-driven decision support for the Head of Ops — pre-computed
-              KPIs, anomaly detection, narratives, and 90-day forecasts.
+              AI decision support for the Head of E-commerce Ops — live
+              replay-fed KPIs, z-score anomaly detection, persona-aware
+              narratives, predictive late-delivery risk, Holt-Winters
+              forecasting, and audited human review.
             </p>
           </div>
         </div>
 
-        {/* ───────── ASK RESULT (conditional) ───────── */}
+        {/* ───────── ASK RESULT (conditional) ─────────
+            Fix 1: structured Decision Brief-style render. Even on error or
+            empty results, the user sees WHAT the AI tried (the SQL) and
+            WHY it didn't work — never just a safety pill alone. */}
         {askResult && (
           <div className="mb-5 animate-fade-up">
             <Panel
@@ -379,44 +438,100 @@ export default function Dashboard() {
               icon={<MessageSquare className="h-3.5 w-3.5 text-primary" strokeWidth={2.2} />}
               tag={
                 <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wider text-primary ring-1 ring-inset ring-primary/20">
-                  Text-to-SQL
+                  Decision Analyst · Text-to-SQL
                 </span>
               }
             >
-              {askResult.error ? (
-                <Badge variant="destructive">{askResult.error}</Badge>
+              {/* Status line — sits above SQL so the operator sees outcome at a glance. */}
+              <div className="mb-3 flex items-center flex-wrap gap-2 text-[0.7rem] tabular">
+                {askResult.error ? (
+                  <Badge variant="destructive" className="text-[0.65rem]">
+                    {askResult.error}
+                  </Badge>
+                ) : askResult.data && askResult.data.length > 0 ? (
+                  <span className="rounded-md bg-[color:var(--success)]/10 px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-[color:var(--success)] ring-1 ring-inset ring-[color:var(--success)]/30">
+                    {askResult.row_count ?? askResult.data.length} row{(askResult.row_count ?? askResult.data.length) === 1 ? "" : "s"}
+                  </span>
+                ) : (
+                  <span className="rounded-md bg-[color:var(--warning)]/10 px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-[color:var(--warning)] ring-1 ring-inset ring-[color:var(--warning)]/30">
+                    No rows matched
+                  </span>
+                )}
+                {askResult.model && (
+                  <span className="text-muted-foreground/70">
+                    via {askResult.provider}/{askResult.model}
+                  </span>
+                )}
+              </div>
+
+              {/* SQL — always shown when it exists, regardless of error/empty.
+                  This is what the AI actually did; hiding it hides the AI. */}
+              {askResult.sql ? (
+                <pre className="font-mono text-[0.72rem] text-primary/85 surface-2 rounded-lg p-3.5 ring-1 ring-inset ring-foreground/10 overflow-auto mb-3 leading-relaxed whitespace-pre-wrap">
+                  {askResult.sql}
+                </pre>
               ) : (
-                <>
-                  <pre className="font-mono text-[0.72rem] text-primary/85 surface-2 rounded-lg p-3.5 ring-1 ring-inset ring-foreground/10 overflow-auto mb-3 leading-relaxed">
-                    {askResult.sql}
-                  </pre>
-                  {askResult.data && askResult.data.length > 0 && (
-                    <div className="overflow-auto max-h-72 rounded-lg ring-1 ring-inset ring-foreground/10">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            {Object.keys(askResult.data[0]).map((k) => (
-                              <TableHead key={k} className="text-[0.65rem] uppercase tracking-wider">
-                                {k}
-                              </TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {askResult.data.slice(0, 20).map((row, i) => (
-                            <TableRow key={i} className="hover:bg-[color:var(--surface-2)]">
-                              {Object.values(row).map((v, j) => (
-                                <TableCell key={j} className="tabular text-xs">
-                                  {typeof v === "number" ? v.toLocaleString() : String(v)}
-                                </TableCell>
-                              ))}
-                            </TableRow>
+                !askResult.error && (
+                  <p className="text-[0.75rem] text-muted-foreground mb-3">
+                    The model didn&apos;t emit any SQL. Try rephrasing your question.
+                  </p>
+                )
+              )}
+
+              {/* Data table */}
+              {askResult.data && askResult.data.length > 0 && (
+                <div className="overflow-auto max-h-72 rounded-lg ring-1 ring-inset ring-foreground/10 mb-3">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {Object.keys(askResult.data[0]).map((k) => (
+                          <TableHead key={k} className="text-[0.65rem] uppercase tracking-wider">
+                            {k}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {askResult.data.slice(0, 20).map((row, i) => (
+                        <TableRow key={i} className="hover:bg-[color:var(--surface-2)]">
+                          {Object.values(row).map((v, j) => (
+                            <TableCell key={j} className="tabular text-xs">
+                              {typeof v === "number" ? v.toLocaleString() : String(v)}
+                            </TableCell>
                           ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
-                </>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Fix 5: follow-up suggestion chips. Backend returns up to 3;
+                  clicking one re-fires /ask with that question. */}
+              {askResult.follow_up_questions && askResult.follow_up_questions.length > 0 && (
+                <div className="border-t border-border/60 pt-3 mt-1">
+                  <div className="text-[0.6rem] uppercase tracking-[0.1em] text-muted-foreground/70 mb-2">
+                    Follow up
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {askResult.follow_up_questions.map((q, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleFollowUp(q)}
+                        disabled={askLoading}
+                        className={cn(
+                          "tabular text-left rounded-md px-2.5 py-1 text-[0.7rem]",
+                          "bg-[color:var(--surface-1)] hover:bg-[color:var(--surface-2)]",
+                          "text-foreground ring-1 ring-inset ring-foreground/10",
+                          "hover:ring-primary/40 transition-colors disabled:opacity-50"
+                        )}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </Panel>
           </div>

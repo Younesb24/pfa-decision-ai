@@ -28,7 +28,7 @@ load_dotenv(Path(__file__).parent / ".env")  # MUST be before router imports
 # are already set.
 load_dotenv(Path(__file__).parent.parent / ".env", override=False)
 
-from routers import ask, governance, health, insights, kpi, ml  # noqa: E402
+from routers import ask, governance, health, insights, kpi, ml, replay  # noqa: E402
 
 
 @asynccontextmanager
@@ -79,3 +79,4 @@ app.include_router(ml.router, prefix="/api/v1", tags=["ML"])
 app.include_router(ask.router, prefix="/api/v1", tags=["Text-to-SQL"])
 app.include_router(insights.router, prefix="/api/v1", tags=["Insights"])
 app.include_router(governance.router, prefix="/api/v1", tags=["Governance"])
+app.include_router(replay.router, prefix="/api/v1", tags=["Replay"])

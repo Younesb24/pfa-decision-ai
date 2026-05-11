@@ -1,0 +1,7 @@
+# Dagster workspace — points `dagster dev` at the package's Definitions.
+# Run from repo root:
+#     dagster dev -w dagster_pipeline/workspace.yaml
+# or rely on the default module discovery:
+#     dagster dev -m dagster_pipeline
+load_from:
+  - python_module: dagster_pipeline

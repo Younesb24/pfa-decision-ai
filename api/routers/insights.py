@@ -16,15 +16,24 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from db import log_audit, query_gold, query_gold_one
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from llm_client import complete, is_available
 from pydantic import BaseModel
 
 router = APIRouter()
+
+
+def _validate_range(start: date | None, end: date | None) -> None:
+    """Same shape as in kpi.py — reject inverted ranges with a 400."""
+    if start is not None and end is not None and start > end:
+        raise HTTPException(
+            status_code=400,
+            detail=f"start ({start}) must be <= end ({end})",
+        )
 
 Persona = Literal["ops", "finance", "supply"]
 ALLOWED_PERSONAS: tuple[Persona, ...] = ("ops", "finance", "supply")
@@ -98,33 +107,76 @@ class AlertsResponse(BaseModel):
 
 # ── Helpers ──
 
-def _gather_kpi_context() -> dict:
-    """Pull the deterministic KPI bundle that grounds the narrative."""
-    summary = query_gold_one("""
+def _gather_kpi_context(start: date | None = None, end: date | None = None) -> dict:
+    """Pull the deterministic KPI bundle that grounds the narrative, optionally
+    scoped to a date window. When start/end are None the legacy behaviour is
+    preserved (full dataset).
+
+    The trend block compares the requested window against an equal-length
+    prior window — much more useful than the legacy "last 30 vs prior 30"
+    when the user has picked a custom range."""
+    params = {"start": start, "end": end}
+
+    range_filter = """
+        WHERE (%(start)s::date IS NULL OR order_date >= %(start)s::date)
+          AND (%(end)s::date IS NULL OR order_date <= %(end)s::date)
+    """
+    summary = query_gold_one(f"""
         SELECT
-            sum(total_orders) as total_orders,
-            round(sum(total_gmv)::numeric, 2) as total_revenue,
+            coalesce(sum(total_orders), 0)::bigint as total_orders,
+            round(coalesce(sum(total_gmv), 0)::numeric, 2) as total_revenue,
             round((sum(total_gmv) / nullif(sum(total_orders), 0))::numeric, 2) as aov,
             round((sum(on_time_orders)::numeric / nullif(sum(delivered_orders), 0) * 100)::numeric, 2) as otif_rate,
-            round((sum(canceled_orders)::numeric / nullif(sum(total_orders), 0) * 100)::numeric, 2) as cancel_rate
+            round((sum(canceled_orders)::numeric / nullif(sum(total_orders), 0) * 100)::numeric, 2) as cancel_rate,
+            min(order_date)::text as period_start,
+            max(order_date)::text as period_end
         FROM gold.agg_daily_ops_kpi
-    """) or {}
+        {range_filter}
+    """, params) or {}
 
-    trend = query_gold_one("""
-        WITH ranked AS (
-            SELECT order_date, total_orders, total_gmv, otif_rate,
-                   row_number() OVER (ORDER BY order_date DESC) as rn
-            FROM gold.agg_daily_ops_kpi
-        )
-        SELECT
-            round(avg(case when rn <= 30 then total_gmv end)::numeric, 2) as recent_avg_gmv,
-            round(avg(case when rn > 30 and rn <= 60 then total_gmv end)::numeric, 2) as prior_avg_gmv,
-            round(avg(case when rn <= 30 then total_orders end)::numeric, 0) as recent_avg_orders,
-            round(avg(case when rn > 30 and rn <= 60 then total_orders end)::numeric, 0) as prior_avg_orders,
-            round(avg(case when rn <= 30 then otif_rate end)::numeric, 2) as recent_otif,
-            round(avg(case when rn > 30 and rn <= 60 then otif_rate end)::numeric, 2) as prior_otif
-        FROM ranked WHERE rn <= 60
-    """) or {}
+    # Compare the user-picked window against the equal-length prior window.
+    # When no range is given, fall back to the legacy "last 30 vs prior 30" framing.
+    if start and end:
+        trend = query_gold_one("""
+            WITH window_days AS (
+                SELECT (%(end)s::date - %(start)s::date + 1) AS days
+            ),
+            recent AS (
+                SELECT avg(total_gmv) AS gmv, avg(total_orders) AS orders, avg(otif_rate) AS otif
+                  FROM gold.agg_daily_ops_kpi
+                 WHERE order_date BETWEEN %(start)s::date AND %(end)s::date
+            ),
+            prior AS (
+                SELECT avg(total_gmv) AS gmv, avg(total_orders) AS orders, avg(otif_rate) AS otif
+                  FROM gold.agg_daily_ops_kpi, window_days
+                 WHERE order_date >= %(start)s::date - window_days.days * INTERVAL '1 day'
+                   AND order_date <  %(start)s::date
+            )
+            SELECT
+                round(recent.gmv::numeric, 2)    AS recent_avg_gmv,
+                round(prior.gmv::numeric, 2)     AS prior_avg_gmv,
+                round(recent.orders::numeric, 0) AS recent_avg_orders,
+                round(prior.orders::numeric, 0)  AS prior_avg_orders,
+                round(recent.otif::numeric, 2)   AS recent_otif,
+                round(prior.otif::numeric, 2)    AS prior_otif
+            FROM recent, prior
+        """, params) or {}
+    else:
+        trend = query_gold_one("""
+            WITH ranked AS (
+                SELECT order_date, total_orders, total_gmv, otif_rate,
+                       row_number() OVER (ORDER BY order_date DESC) as rn
+                FROM gold.agg_daily_ops_kpi
+            )
+            SELECT
+                round(avg(case when rn <= 30 then total_gmv end)::numeric, 2) as recent_avg_gmv,
+                round(avg(case when rn > 30 and rn <= 60 then total_gmv end)::numeric, 2) as prior_avg_gmv,
+                round(avg(case when rn <= 30 then total_orders end)::numeric, 0) as recent_avg_orders,
+                round(avg(case when rn > 30 and rn <= 60 then total_orders end)::numeric, 0) as prior_avg_orders,
+                round(avg(case when rn <= 30 then otif_rate end)::numeric, 2) as recent_otif,
+                round(avg(case when rn > 30 and rn <= 60 then otif_rate end)::numeric, 2) as prior_otif
+            FROM ranked WHERE rn <= 60
+        """) or {}
 
     risky = query_gold("""
         SELECT seller_id, seller_risk_score, late_delivery_rate, avg_review_score
@@ -133,18 +185,28 @@ def _gather_kpi_context() -> dict:
         ORDER BY seller_risk_score DESC LIMIT 3
     """)
 
-    nps = query_gold_one("""
+    # NPS scoped to the same window using review_created_at (timestamp -> date).
+    nps_range_filter = """
+        WHERE (%(start)s::date IS NULL OR review_created_at::date >= %(start)s::date)
+          AND (%(end)s::date IS NULL OR review_created_at::date <= %(end)s::date)
+    """
+    nps = query_gold_one(f"""
         SELECT
             round(avg(review_score)::numeric, 2) as avg_score,
-            round((count(*) filter (where nps_category = 'detractor')::numeric / count(*) * 100)::numeric, 1) as detractor_pct
+            round((count(*) filter (where nps_category = 'detractor')::numeric / nullif(count(*), 0) * 100)::numeric, 1) as detractor_pct
         FROM gold.fct_reviews
-    """) or {}
+        {nps_range_filter}
+    """, params) or {}
 
     return {
         "summary": dict(summary),
         "trend": dict(trend),
         "top_risky_sellers": [dict(s) for s in risky],
         "nps": dict(nps),
+        "window": {
+            "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None,
+        },
     }
 
 
@@ -240,14 +302,24 @@ def _template_narrative(persona: Persona, ctx: dict) -> str:
 @router.get("/insights/narrative")
 async def get_narrative(
     persona: str = Query(default="ops", description="ops | finance | supply"),
+    start: date | None = Query(
+        default=None,
+        description="Narrate for this window (ISO date). Omit for full dataset.",
+    ),
+    end: date | None = Query(
+        default=None,
+        description="Window end (ISO date). Omit for full dataset.",
+    ),
 ) -> NarrativeResponse:
-    """Generate an executive narrative tailored to the requested persona."""
+    """Generate an executive narrative tailored to the requested persona,
+    optionally scoped to a date window so the briefing reacts to the picker."""
     started = time.perf_counter()
     if persona not in ALLOWED_PERSONAS:
         persona = "ops"
     p: Persona = persona  # type: ignore[assignment]
+    _validate_range(start, end)
 
-    data_context = _gather_kpi_context()
+    data_context = _gather_kpi_context(start=start, end=end)
     framing = PERSONA_FRAMING[p]
     system = NARRATIVE_SYSTEM_TEMPLATE.format(**framing)
     user = _persona_user_prompt(p, data_context)
@@ -293,8 +365,25 @@ async def get_narrative(
 # ── Endpoint: anomaly alerts ──
 
 @router.get("/insights/alerts")
-async def get_anomaly_alerts() -> AlertsResponse:
-    """Detect z-score anomalies in recent daily KPIs (|z| >= 2 = warning, >= 3 = critical)."""
+async def get_anomaly_alerts(
+    start: date | None = Query(
+        default=None,
+        description="Restrict alerts to this window (ISO date). Omit = last 30 days.",
+    ),
+    end: date | None = Query(
+        default=None,
+        description="Window end (ISO date). Omit = last 30 days.",
+    ),
+) -> AlertsResponse:
+    """Detect z-score anomalies in daily KPIs (|z| >= 2 = warning, >= 3 = critical).
+
+    Stats (mean/stddev) are always computed across the FULL dataset — that's
+    the population the daily values are measured against. Only the candidate
+    `recent` window is filtered by start/end so the operator sees anomalies
+    inside the date range they picked, not historical noise."""
+    _validate_range(start, end)
+    params = {"start": start, "end": end}
+
     rows = query_gold("""
         WITH stats AS (
             SELECT
@@ -310,9 +399,16 @@ async def get_anomaly_alerts() -> AlertsResponse:
         ),
         recent AS (
             SELECT order_date, total_orders, total_gmv, otif_rate, cancellation_rate
-            FROM gold.agg_daily_ops_kpi
-            ORDER BY order_date DESC
-            LIMIT 30
+              FROM gold.agg_daily_ops_kpi
+             WHERE
+                 CASE
+                     WHEN %(start)s::date IS NOT NULL OR %(end)s::date IS NOT NULL THEN
+                         (%(start)s::date IS NULL OR order_date >= %(start)s::date) AND
+                         (%(end)s::date   IS NULL OR order_date <= %(end)s::date)
+                     ELSE order_date >= (SELECT max(order_date) - INTERVAL '29 days'
+                                           FROM gold.agg_daily_ops_kpi)
+                 END
+             ORDER BY order_date DESC
         )
         SELECT
             r.order_date::text,
@@ -326,7 +422,7 @@ async def get_anomaly_alerts() -> AlertsResponse:
             round(((r.cancellation_rate - s.mean_cancel) / nullif(s.std_cancel, 0))::numeric, 2) as z_cancel
         FROM recent r, stats s
         ORDER BY r.order_date DESC
-    """)
+    """, params)
 
     alerts: list[AnomalyAlert] = []
     for row in rows:

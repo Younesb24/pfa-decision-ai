@@ -5,6 +5,7 @@ import type {
   DailyKPI,
   Forecast,
   KPISummary,
+  ReplayState,
   ReviewDecision,
   ReviewResult,
   SellerScore,
@@ -84,21 +85,34 @@ export async function fetchMlMetrics(): Promise<Record<string, unknown> | null> 
   return res.data || null;
 }
 
-export async function fetchNarrative(): Promise<string | null> {
+export async function fetchNarrative(range?: DateRange, persona = "ops"): Promise<string | null> {
   try {
-    const res = await fetchJson<{ narrative: string }>(`${API_BASE}/insights/narrative`);
+    const qs = ["persona=" + persona, rangeQS(range)].filter(Boolean).join("&");
+    const url = qs ? `${API_BASE}/insights/narrative?${qs}` : `${API_BASE}/insights/narrative`;
+    const res = await fetchJson<{ narrative: string }>(url);
     return res.narrative;
   } catch {
     return null;
   }
 }
 
-export async function fetchAlerts(): Promise<AnomalyAlert[]> {
+export async function fetchAlerts(range?: DateRange): Promise<AnomalyAlert[]> {
   try {
-    const res = await fetchJson<{ alerts: AnomalyAlert[] }>(`${API_BASE}/insights/alerts`);
+    const url = joinQS(`${API_BASE}/insights/alerts`, rangeQS(range));
+    const res = await fetchJson<{ alerts: AnomalyAlert[] }>(url);
     return res.alerts || [];
   } catch {
     return [];
+  }
+}
+
+/** Replay-simulator state — drives the LIVE pill (synthetic_today + last refresh). */
+export async function fetchReplayState(): Promise<ReplayState | null> {
+  try {
+    const res = await fetchJson<{ data: ReplayState }>(`${API_BASE}/replay/state`);
+    return res.data;
+  } catch {
+    return null;
   }
 }
 

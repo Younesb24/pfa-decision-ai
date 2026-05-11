@@ -17,6 +17,7 @@ Every request — successful or rejected — is recorded in governance.audit_log
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import UTC, datetime
@@ -106,6 +107,7 @@ class AskResponse(BaseModel):
     provider: str | None = None
     model: str | None = None
     generated_at: str
+    follow_up_questions: list[str] = []
 
 
 # ── SQL safety ──
@@ -161,6 +163,45 @@ def validate_sql(sql: str) -> str | None:
             return f"Reference to restricted object ({pat.pattern}) is not allowed"
 
     return None
+
+
+# ── Follow-up suggestions ──
+
+FOLLOWUP_SYSTEM = """You suggest follow-up questions for a marketplace ops analyst.
+You receive: the user's original question, the SQL we ran, and the first few result rows.
+Suggest 3 short follow-up questions (max 12 words each) that drill into the answer
+along different axes: by seller, by state, by category, over time, or by recommended action.
+Reply with strict JSON only, no prose, no fences: {"follow_ups": ["...", "...", "..."]}
+"""
+
+
+def _generate_follow_ups(question: str, sql: str, sample_rows: list[dict]) -> list[str]:
+    """Best-effort follow-up suggestion. Returns up to 3 short questions, or
+    [] when the LLM is unavailable or the JSON parse fails. Never raises —
+    we don't want a follow-up failure to break the primary answer."""
+    if not is_available():
+        return []
+    sample = sample_rows[:3]
+    user = (
+        f"Original question: {question}\n\n"
+        f"SQL we ran:\n{sql}\n\n"
+        f"First {len(sample)} rows: {json.dumps(sample, default=str)[:600]}"
+    )
+    try:
+        result = complete(
+            system=FOLLOWUP_SYSTEM,
+            user=user,
+            max_tokens=200,
+            temperature=0.3,
+        )
+        match = re.search(r"\{.*\}", result.text, re.DOTALL)
+        if not match:
+            return []
+        parsed = json.loads(match.group(0))
+        items = parsed.get("follow_ups") or []
+        return [str(q).strip() for q in items if str(q).strip()][:3]
+    except Exception:
+        return []
 
 
 # ── Endpoint ──
@@ -273,13 +314,15 @@ async def ask_question(req: AskRequest) -> AskResponse:
                 clean[k] = v
         serialized.append(clean)
 
+    follow_ups = _generate_follow_ups(req.question, sql, serialized)
+
     log_audit(
         endpoint="POST /api/v1/ask",
         user_input=req.question,
         llm_provider=result.provider,
         llm_model=result.model,
         llm_output=sql,
-        data_context={"row_count": len(rows)},
+        data_context={"row_count": len(rows), "follow_up_count": len(follow_ups)},
         latency_ms=int((time.perf_counter() - started) * 1000),
     )
 
@@ -291,6 +334,7 @@ async def ask_question(req: AskRequest) -> AskResponse:
         provider=result.provider,
         model=result.model,
         generated_at=now_iso(),
+        follow_up_questions=follow_ups,
     )
 
 

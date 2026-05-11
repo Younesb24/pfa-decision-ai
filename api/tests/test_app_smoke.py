@@ -41,6 +41,28 @@ def test_openapi_schema_exposes_persona_param_on_kpi_summary(client: TestClient)
     assert "persona" in param_names
 
 
+def test_openapi_schema_exposes_date_range_params_on_kpi_endpoints(client: TestClient):
+    """Day 1 contract: /kpi/summary and /kpi/daily accept start/end ISO dates."""
+    rsp = client.get("/openapi.json")
+    spec = rsp.json()
+    for path in ("/api/v1/kpi/summary", "/api/v1/kpi/daily"):
+        params = {p["name"] for p in spec["paths"][path]["get"].get("parameters", [])}
+        assert "start" in params, f"{path} missing start"
+        assert "end" in params, f"{path} missing end"
+
+
+def test_kpi_summary_rejects_inverted_date_range(client: TestClient):
+    """Defense in depth: inverted ranges 400 before we hit Postgres."""
+    rsp = client.get("/api/v1/kpi/summary?start=2018-09-01&end=2017-01-01")
+    assert rsp.status_code == 400
+    assert "must be <=" in rsp.json()["detail"]
+
+
+def test_kpi_daily_rejects_inverted_date_range(client: TestClient):
+    rsp = client.get("/api/v1/kpi/daily?start=2018-09-01&end=2017-01-01")
+    assert rsp.status_code == 400
+
+
 def test_openapi_schema_exposes_persona_param_on_narrative(client: TestClient):
     rsp = client.get("/openapi.json")
     spec = rsp.json()

@@ -30,6 +30,9 @@ dbt-docs:
 audit-init:
 	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/audit_log_migration.sql
 
+alerts-init:
+	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/governance_alerts_migration.sql
+
 # ── Replay simulator + Dagster (Day 2) ──
 replay-init:
 	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/replay_state_migration.sql

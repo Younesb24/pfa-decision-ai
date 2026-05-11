@@ -139,3 +139,62 @@ sources:
               - unique
           - name: product_category_name_english
             description: "Category name in English"
+
+      # ── Replay layer (Day 2) ──
+      # Mirror tables populated by scripts/replay_simulator.py one row at a
+      # time as the synthetic clock advances. Staging models UNION these with
+      # the legacy bronze.* tables so Gold sees a continuously growing
+      # dataset.
+      #
+      # Source freshness (Day 3): warn after 30 min of no new rows, error
+      # after 90 min. Drives the Dagster freshness sensor that writes to
+      # governance.alerts when the replay clock stalls.
+      - name: orders_live
+        description: "Replay-fed orders — each row carries `_ingest_run_id` so dbt can resolve duplicates across ticks."
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:  {count: 30,  period: minute}
+          error_after: {count: 90,  period: minute}
+        columns:
+          - name: order_id
+            description: "Replay-prefixed order_id (`replay_<run_id>_<orig>`)."
+            tests: [not_null]
+          - name: _ingest_run_id
+            description: "FK to replay.run(run_id)."
+            tests: [not_null]
+
+      - name: order_items_live
+        description: "Replay-fed order items."
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:  {count: 30,  period: minute}
+          error_after: {count: 90,  period: minute}
+        columns:
+          - name: order_id
+            tests: [not_null]
+          - name: _ingest_run_id
+            tests: [not_null]
+
+      - name: order_reviews_live
+        description: "Replay-fed customer reviews."
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:  {count: 30,  period: minute}
+          error_after: {count: 90,  period: minute}
+        columns:
+          - name: review_id
+            tests: [not_null]
+          - name: _ingest_run_id
+            tests: [not_null]
+
+      - name: order_payments_live
+        description: "Replay-fed payments."
+        loaded_at_field: _ingested_at
+        freshness:
+          warn_after:  {count: 30,  period: minute}
+          error_after: {count: 90,  period: minute}
+        columns:
+          - name: order_id
+            tests: [not_null]
+          - name: _ingest_run_id
+            tests: [not_null]

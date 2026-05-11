@@ -1,5 +1,6 @@
-"""
-Unified LLM client.
+"""LLM client.
+
+Unified wrapper.
 
 CLAUDE.md locks the stack to Anthropic Claude. This module preferentially uses
 Anthropic if ANTHROPIC_API_KEY is set, and falls back to OpenAI GPT-4o if only
@@ -27,6 +28,33 @@ Provider = Literal["anthropic", "openai", "none"]
 
 _ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 _OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+
+def _build_http_client():
+    """Optional httpx client for environments behind a TLS-intercepting proxy
+    (Zscaler / corporate AV). Two opt-in env knobs, neither set by default:
+
+      LLM_CA_BUNDLE=/path/to/corporate-root.pem
+          Preferred. Real cert verification, just against your corporate CA.
+      LLM_INSECURE_TLS=1
+          Last resort. Skips verification entirely. Local-dev only — never
+          commit a .env that sets this without a comment explaining why.
+
+    Returns None when neither is set, so the SDK uses its built-in defaults.
+    """
+    ca_bundle = os.getenv("LLM_CA_BUNDLE")
+    insecure = os.getenv("LLM_INSECURE_TLS", "").lower() in ("1", "true", "yes")
+    if not ca_bundle and not insecure:
+        return None
+
+    try:
+        import httpx
+    except ImportError:
+        return None
+
+    if ca_bundle:
+        return httpx.Client(verify=ca_bundle, timeout=60.0)
+    return httpx.Client(verify=False, timeout=60.0)
 
 
 @dataclass(frozen=True)
@@ -65,7 +93,10 @@ def complete(
     if provider == "anthropic":
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        # Only pass http_client when explicitly overridden; older SDK versions
+        # mis-handle the None case.
+        _http = _build_http_client()
+        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"], **({"http_client": _http} if _http else {}))
         msg = client.messages.create(
             model=_ANTHROPIC_MODEL,
             max_tokens=max_tokens,
@@ -80,7 +111,8 @@ def complete(
     if provider == "openai":
         from openai import OpenAI
 
-        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        _http = _build_http_client()
+        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], **({"http_client": _http} if _http else {}))
         rsp = client.chat.completions.create(
             model=_OPENAI_MODEL,
             max_tokens=max_tokens,

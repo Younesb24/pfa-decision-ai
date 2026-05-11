@@ -4,14 +4,23 @@ All computations are deterministic (no LLM). LLM = narrator only.
 Source of truth: agent_docs/kpi_catalog.md
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from db import query_gold, query_gold_one
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 router = APIRouter()
+
+
+def _validate_range(start: date | None, end: date | None) -> None:
+    """Reject inverted ranges early so the SQL layer never sees them."""
+    if start is not None and end is not None and start > end:
+        raise HTTPException(
+            status_code=400,
+            detail=f"start ({start}) must be <= end ({end})",
+        )
 
 
 # ── Personas ──
@@ -45,6 +54,26 @@ class KPISummary(BaseModel):
     cancellation_rate: float = Field(description="% canceled orders — KPI #4, alert > 5%")
     active_sellers: int
     unique_customers: int
+    data_as_of: str | None = Field(
+        default=None,
+        description="max(order_date) in gold.agg_daily_ops_kpi — the actual data cutoff",
+    )
+    requested_start: str | None = Field(
+        default=None,
+        description="Echoed ?start= if provided, else null",
+    )
+    requested_end: str | None = Field(
+        default=None,
+        description="Echoed ?end= if provided, else null",
+    )
+    is_partial_period: bool = Field(
+        default=False,
+        description=(
+            "True when the requested window extends beyond the actual data range "
+            "(common for Olist replay/historical demos). UI should label the delta "
+            "chip as 'partial period' rather than imply a recent collapse."
+        ),
+    )
 
 
 class DailyKPI(BaseModel):
@@ -85,51 +114,130 @@ class KPIResponse(BaseModel):
 @router.get("/kpi/summary", response_model=KPIResponse)
 async def get_kpi_summary(
     persona: str = Query(default="ops", description="ops | finance | supply — controls highlighted KPIs only"),
+    start: date | None = Query(
+        default=None,
+        description="Filter on order_date >= start (ISO date). Omit for full dataset.",
+    ),
+    end: date | None = Query(
+        default=None,
+        description="Filter on order_date <= end (ISO date). Omit for full dataset.",
+    ),
 ) -> KPIResponse:
     """
-    Overall KPI summary across the entire dataset.
+    KPI summary for the requested window (or the full dataset if no window given).
     Computes OTIF, AOV, NPS proxy, cancellation rate from Gold layer.
 
     The `persona` parameter does NOT change the numbers — same data for everyone.
     It only annotates which KPIs the frontend should emphasize for that role.
+
+    When `start`/`end` extend beyond the actual data range, `is_partial_period`
+    flips to `true` so the UI can label deltas accordingly (Olist data ends
+    around 2018-09; a window anchored on "today" otherwise looks like a crash).
     """
     p = _normalize_persona(persona)
-    summary = query_gold_one("""
+    _validate_range(start, end)
+
+    # Single window filter applied to both the ops aggregate and the NPS query.
+    range_filter = """
+        WHERE (%(start)s::date IS NULL OR order_date >= %(start)s::date)
+          AND (%(end)s::date IS NULL OR order_date <= %(end)s::date)
+    """
+    params = {"start": start, "end": end}
+
+    summary = query_gold_one(f"""
         SELECT
             min(order_date)::text as period_start,
             max(order_date)::text as period_end,
-            sum(total_orders) as total_orders,
-            round(sum(total_gmv)::numeric, 2) as total_revenue,
+            coalesce(sum(total_orders), 0)::bigint as total_orders,
+            coalesce(round(sum(total_gmv)::numeric, 2), 0) as total_revenue,
             round((sum(total_gmv) / nullif(sum(total_orders), 0))::numeric, 2) as avg_order_value,
             round((sum(on_time_orders)::numeric / nullif(sum(delivered_orders), 0) * 100)::numeric, 2) as otif_rate,
             round((sum(canceled_orders)::numeric / nullif(sum(total_orders), 0) * 100)::numeric, 2) as cancellation_rate,
-            sum(active_sellers) as active_sellers,
-            sum(unique_customers) as unique_customers
+            coalesce(sum(active_sellers), 0)::bigint as active_sellers,
+            coalesce(sum(unique_customers), 0)::bigint as unique_customers
         FROM gold.agg_daily_ops_kpi
-    """)
+        {range_filter}
+    """, params)
 
-    # NPS proxy from reviews
-    nps = query_gold_one("""
+    # fct_reviews exposes review_created_at (timestamp); cast to date for window filter.
+    nps_range_filter = """
+        WHERE (%(start)s::date IS NULL OR review_created_at::date >= %(start)s::date)
+          AND (%(end)s::date IS NULL OR review_created_at::date <= %(end)s::date)
+    """
+    nps = query_gold_one(f"""
         SELECT
             round(
                 (count(*) filter (where review_score >= 4)::numeric / nullif(count(*), 0) * 100)
                 - (count(*) filter (where review_score <= 2)::numeric / nullif(count(*), 0) * 100)
             , 2) as nps_proxy
         FROM gold.fct_reviews
+        {nps_range_filter}
+    """, params)
+
+    # Dataset cutoff — used to detect "partial period" when the requested window
+    # either extends past the data OR ends inside the source's data-thinning
+    # tail. Olist's last 3 days fall from ~370 orders/day to 1 — windows ending
+    # there would otherwise compute a misleading negative delta in the UI.
+    # NOTE: psycopg2 treats `%` as the start of a format placeholder, so any
+    # literal percent sign in the SQL (including comments) must be escaped as
+    # `%%`. The SQL below has none — see commit notes if you re-introduce one.
+    cutoff_row = query_gold_one("""
+        WITH bounds AS (
+            SELECT max(order_date) AS data_as_of,
+                   max(order_date) - INTERVAL '30 days' AS look_back_30
+              FROM gold.agg_daily_ops_kpi
+        ),
+        recent AS (
+            SELECT k.order_date, k.total_orders
+              FROM gold.agg_daily_ops_kpi k, bounds b
+             WHERE k.order_date >= b.look_back_30
+        ),
+        median_calc AS (
+            SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total_orders) AS median_orders
+              FROM recent
+        )
+        SELECT
+            (SELECT data_as_of::text FROM bounds) AS data_as_of,
+            -- First day (walking backwards from the cutoff) where daily volume
+            -- is < one-quarter of the trailing-30 median. Anything from this
+            -- day onwards is unreliable and gets the partial-period label.
+            (
+                SELECT min(r.order_date)::text
+                  FROM recent r, median_calc m, bounds b
+                 WHERE r.total_orders < 0.25 * m.median_orders
+                   AND r.order_date >= b.data_as_of - INTERVAL '7 days'
+            ) AS data_thinning_starts_at
     """)
+    data_as_of = cutoff_row["data_as_of"] if cutoff_row else None
+    thinning_starts = cutoff_row["data_thinning_starts_at"] if cutoff_row else None
+
+    is_partial = bool(
+        data_as_of
+        and end is not None
+        and (
+            # Window extends past the actual cutoff
+            end.isoformat() > data_as_of
+            # OR window reaches into the data-thinning tail
+            or (thinning_starts is not None and end.isoformat() >= thinning_starts)
+        )
+    )
 
     return KPIResponse(
         data=KPISummary(
-            period_start=summary["period_start"],
-            period_end=summary["period_end"],
-            total_orders=summary["total_orders"],
-            total_revenue=float(summary["total_revenue"]),
-            avg_order_value=float(summary["avg_order_value"]),
+            period_start=summary["period_start"] or (start.isoformat() if start else ""),
+            period_end=summary["period_end"] or (end.isoformat() if end else ""),
+            total_orders=summary["total_orders"] or 0,
+            total_revenue=float(summary["total_revenue"] or 0),
+            avg_order_value=float(summary["avg_order_value"] or 0),
             otif_rate=float(summary["otif_rate"]) if summary["otif_rate"] else 0,
             nps_proxy=float(nps["nps_proxy"]) if nps and nps["nps_proxy"] else 0,
-            cancellation_rate=float(summary["cancellation_rate"]),
-            active_sellers=summary["active_sellers"],
-            unique_customers=summary["unique_customers"],
+            cancellation_rate=float(summary["cancellation_rate"] or 0),
+            active_sellers=summary["active_sellers"] or 0,
+            unique_customers=summary["unique_customers"] or 0,
+            data_as_of=data_as_of,
+            requested_start=start.isoformat() if start else None,
+            requested_end=end.isoformat() if end else None,
+            is_partial_period=is_partial,
         ),
         generated_at=datetime.now(UTC).isoformat(),
         persona=p,
@@ -139,21 +247,59 @@ async def get_kpi_summary(
 
 @router.get("/kpi/daily")
 async def get_daily_kpis(
-    days: int = Query(default=30, ge=7, le=365, description="Number of recent days"),
+    days: int = Query(
+        default=30,
+        ge=7,
+        le=365,
+        description="Trailing N days from the data cutoff (ignored when start/end are set).",
+    ),
+    start: date | None = Query(
+        default=None,
+        description="Filter on order_date >= start (ISO date). Takes precedence over days.",
+    ),
+    end: date | None = Query(
+        default=None,
+        description="Filter on order_date <= end (ISO date). Takes precedence over days.",
+    ),
 ) -> KPIResponse:
-    """Daily KPI timeseries for dashboard charts."""
-    rows = query_gold("""
-        SELECT
-            order_date::text,
-            total_orders, total_gmv,
-            round(aov::numeric, 2) as aov,
-            otif_rate, cancellation_rate,
-            round(avg_delivery_delay_days::numeric, 2) as avg_delivery_delay_days,
-            active_sellers, unique_customers
-        FROM gold.agg_daily_ops_kpi
-        ORDER BY order_date DESC
-        LIMIT %(days)s
-    """, {"days": days})
+    """Daily KPI timeseries for dashboard charts.
+
+    Two modes:
+      * `start`/`end` set → return every day in [start, end].
+      * neither set → return the trailing `days` rows (legacy behavior).
+    """
+    _validate_range(start, end)
+
+    if start is not None or end is not None:
+        rows = query_gold("""
+            SELECT
+                order_date::text,
+                total_orders, total_gmv,
+                round(aov::numeric, 2) as aov,
+                otif_rate, cancellation_rate,
+                round(avg_delivery_delay_days::numeric, 2) as avg_delivery_delay_days,
+                active_sellers, unique_customers
+            FROM gold.agg_daily_ops_kpi
+            WHERE (%(start)s::date IS NULL OR order_date >= %(start)s::date)
+              AND (%(end)s::date IS NULL OR order_date <= %(end)s::date)
+            ORDER BY order_date ASC
+        """, {"start": start, "end": end})
+    else:
+        rows = query_gold("""
+            SELECT * FROM (
+                SELECT
+                    order_date::text,
+                    total_orders, total_gmv,
+                    round(aov::numeric, 2) as aov,
+                    otif_rate, cancellation_rate,
+                    round(avg_delivery_delay_days::numeric, 2) as avg_delivery_delay_days,
+                    active_sellers, unique_customers
+                FROM gold.agg_daily_ops_kpi
+                ORDER BY order_date DESC
+                LIMIT %(days)s
+            ) recent
+            ORDER BY order_date ASC
+        """, {"days": days})
 
     return KPIResponse(
         data=[DailyKPI(**row) for row in rows],

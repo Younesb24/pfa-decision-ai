@@ -4,6 +4,7 @@ import { Search, Sparkles, Activity, Command } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateRangePicker } from "./date-range-picker";
 
 interface StatusPill {
   label: string;
@@ -89,6 +90,11 @@ export function TopBar({
           {status.map((s) => (
             <StatusPillView key={s.label} pill={s} />
           ))}
+        </div>
+
+        {/* Date range picker — Day 1, shared via useTimeRange store. */}
+        <div className="hidden md:flex items-center pl-2 lg:pl-3 lg:border-l lg:border-border/60 shrink-0">
+          <DateRangePicker />
         </div>
 
         {period && (

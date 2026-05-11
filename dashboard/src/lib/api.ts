@@ -1,7 +1,36 @@
 /* ─── API Service Layer ─── */
-import type { KPISummary, DailyKPI, SellerScore, Forecast, AnomalyAlert, AskResult } from "./types";
+import type {
+  AnomalyAlert,
+  AskResult,
+  DailyKPI,
+  Forecast,
+  KPISummary,
+  ReviewDecision,
+  ReviewResult,
+  SellerScore,
+} from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+
+/** A start/end pair accepted by every /kpi/* endpoint. Both nullable so
+ *  callers can pass through the zustand store as-is. */
+export interface DateRange {
+  start: string | null;
+  end: string | null;
+}
+
+function rangeQS(r?: DateRange): string {
+  if (!r) return "";
+  const qs: string[] = [];
+  if (r.start) qs.push(`start=${r.start}`);
+  if (r.end) qs.push(`end=${r.end}`);
+  return qs.length ? qs.join("&") : "";
+}
+
+function joinQS(base: string, ...parts: string[]): string {
+  const filled = parts.filter(Boolean);
+  return filled.length ? `${base}?${filled.join("&")}` : base;
+}
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -9,19 +38,31 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export async function fetchKpiSummary(): Promise<KPISummary> {
-  const res = await fetchJson<{ data: KPISummary }>(`${API_BASE}/kpi/summary`);
+export async function fetchKpiSummary(range?: DateRange): Promise<KPISummary> {
+  const url = joinQS(`${API_BASE}/kpi/summary`, rangeQS(range));
+  const res = await fetchJson<{ data: KPISummary }>(url);
   return res.data;
 }
 
-export async function fetchDailyKpis(days = 90): Promise<DailyKPI[]> {
-  const res = await fetchJson<{ data: DailyKPI[] }>(`${API_BASE}/kpi/daily?days=${days}`);
-  return (res.data || []).reverse();
+export async function fetchDailyKpis(
+  rangeOrDays: DateRange | number = 90,
+): Promise<DailyKPI[]> {
+  let url: string;
+  if (typeof rangeOrDays === "number") {
+    url = `${API_BASE}/kpi/daily?days=${rangeOrDays}`;
+  } else {
+    url = joinQS(`${API_BASE}/kpi/daily`, rangeQS(rangeOrDays));
+  }
+  const res = await fetchJson<{ data: DailyKPI[] }>(url);
+  // Backend now returns ascending order; preserve compatibility if any path
+  // ever flips this.
+  const rows = res.data || [];
+  return rows;
 }
 
 export async function fetchSellers(limit = 10, minOrders = 30): Promise<SellerScore[]> {
   const res = await fetchJson<{ data: SellerScore[] }>(
-    `${API_BASE}/kpi/sellers?limit=${limit}&min_orders=${minOrders}`
+    `${API_BASE}/kpi/sellers?limit=${limit}&min_orders=${minOrders}`,
   );
   return res.data || [];
 }
@@ -33,7 +74,7 @@ export async function fetchForecast(): Promise<Forecast | null> {
 
 export async function fetchCategories(topN = 8): Promise<Record<string, unknown>[]> {
   const res = await fetchJson<{ data: Record<string, unknown>[] }>(
-    `${API_BASE}/kpi/revenue-by-category?top_n=${topN}`
+    `${API_BASE}/kpi/revenue-by-category?top_n=${topN}`,
   );
   return res.data || [];
 }
@@ -70,5 +111,33 @@ export async function askQuestion(question: string): Promise<AskResult> {
     });
   } catch {
     return { question, sql: "", data: null, error: "API unreachable" };
+  }
+}
+
+/** Mark an anomaly/alert as reviewed (Day 1 deliverable — closes OODA "Act"). */
+export async function submitReview(input: {
+  subject_ref: string;
+  decision: ReviewDecision;
+  note?: string;
+  reviewer?: string;
+}): Promise<ReviewResult> {
+  try {
+    return await fetchJson<ReviewResult>(`${API_BASE}/governance/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject_type: "alert",
+        subject_ref: input.subject_ref,
+        decision: input.decision,
+        note: input.note ?? null,
+        reviewer: input.reviewer ?? null,
+      }),
+    });
+  } catch {
+    return {
+      recorded: false,
+      review_id: null,
+      generated_at: new Date().toISOString(),
+    };
   }
 }

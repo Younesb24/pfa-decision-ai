@@ -11,6 +11,14 @@ export interface KPISummary {
   unique_customers: number;
   period_start: string;
   period_end: string;
+  /** max(order_date) on gold.agg_daily_ops_kpi — actual data cutoff. */
+  data_as_of?: string | null;
+  /** Echoed ?start= (null if not sent). */
+  requested_start?: string | null;
+  /** Echoed ?end= (null if not sent). */
+  requested_end?: string | null;
+  /** true when the requested window extends past data_as_of. */
+  is_partial_period?: boolean;
 }
 
 export interface DailyKPI {
@@ -53,4 +61,13 @@ export interface AskResult {
   sql: string;
   data: Record<string, unknown>[] | null;
   error: string | null;
+}
+
+/** Governance — human review decisions on AI surfaces. */
+export type ReviewDecision = "acknowledge" | "dismiss" | "escalate";
+
+export interface ReviewResult {
+  recorded: boolean;
+  review_id: number | null;
+  generated_at: string;
 }

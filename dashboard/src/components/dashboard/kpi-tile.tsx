@@ -16,6 +16,13 @@ interface KpiTileProps {
   accent?: string;
   /** Percent delta vs previous period — drives chip color & arrow. */
   delta?: number;
+  /**
+   * When `true`, the delta is suppressed and a "partial period" chip is shown
+   * instead. Set by the page whenever the requested window extends past the
+   * actual data cutoff (Olist historical case) — otherwise the trailing-window
+   * delta looks like a recent collapse, which is the artifact we're fixing.
+   */
+  partial?: boolean;
   /** Apply success / warning / danger glow ring on hover. */
   tone?: "neutral" | "success" | "warning" | "danger";
   /** Animation delay class (e.g. animate-fade-up-2). */
@@ -41,24 +48,31 @@ export function KpiTile({
   trend,
   accent = SKY,
   delta,
+  partial = false,
   tone = "neutral",
   delay = "animate-fade-up-1",
 }: KpiTileProps) {
+  // When the requested window is partial (extends past data cutoff), suppress
+  // the trailing-window delta — it would compare in-data days vs empty days
+  // and looks like a -50% crash. The chip becomes a calm "partial" label
+  // instead. This is the Day 1 KPI-delta-artifact fix.
+  const showDelta = !partial && delta != null;
+
   const deltaTone =
-    delta == null
+    !showDelta
       ? "delta-flat"
-      : delta > 0.5
-      ? "delta-up"
-      : delta < -0.5
-      ? "delta-down"
-      : "delta-flat";
+      : delta! > 0.5
+        ? "delta-up"
+        : delta! < -0.5
+          ? "delta-down"
+          : "delta-flat";
 
   const DeltaIcon =
-    delta == null || Math.abs(delta) < 0.5
+    !showDelta || Math.abs(delta!) < 0.5
       ? Minus
-      : delta > 0
-      ? ArrowUpRight
-      : ArrowDownRight;
+      : delta! > 0
+        ? ArrowUpRight
+        : ArrowDownRight;
 
   const toneClass =
     tone === "success"
@@ -101,7 +115,14 @@ export function KpiTile({
           </span>
         </div>
 
-        {delta != null && (
+        {partial ? (
+          <span
+            className="tabular inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wider text-[color:var(--warning)] bg-[color:var(--warning)]/10 ring-1 ring-inset ring-[color:var(--warning)]/30"
+            title="Requested window extends past dataset cutoff — delta hidden"
+          >
+            partial period
+          </span>
+        ) : showDelta ? (
           <span
             className={cn(
               "tabular inline-flex items-center gap-0.5 text-[0.68rem] font-semibold",
@@ -109,9 +130,9 @@ export function KpiTile({
             )}
           >
             <DeltaIcon className="h-3 w-3" strokeWidth={2.5} />
-            {formatDelta(delta)}
+            {formatDelta(delta!)}
           </span>
-        )}
+        ) : null}
       </div>
 
       {/* Value */}

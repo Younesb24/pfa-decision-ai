@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
   BarChart3,
   Bell,
   BookOpen,
@@ -51,6 +49,7 @@ import { Sidebar } from "@/components/dashboard/sidebar";
 import { TopBar } from "@/components/dashboard/top-bar";
 import { KpiTile, KPI_TONES } from "@/components/dashboard/kpi-tile";
 import { Panel } from "@/components/dashboard/panel";
+import { AnomalyCard } from "@/components/dashboard/anomaly-card";
 import {
   askQuestion,
   fetchAlerts,
@@ -62,6 +61,7 @@ import {
   fetchNarrative,
   fetchSellers,
 } from "@/lib/api";
+import { useTimeRange } from "@/lib/stores/useTimeRange";
 import type {
   AnomalyAlert,
   AskResult,
@@ -92,11 +92,33 @@ const fmtK = (n: number) =>
     ? `${(n / 1_000).toFixed(1)}k`
     : fmt(n);
 
-/** Compute % delta of last `windowSize` values vs the prior `windowSize` values. */
-function computeDelta(series: number[], windowSize = 14): number | undefined {
-  if (!series || series.length < windowSize * 2) return undefined;
-  const recent = series.slice(-windowSize);
-  const prior = series.slice(-windowSize * 2, -windowSize);
+/** Sub-line shown under a KPI tile label. Reflects the actively selected
+ *  window when start/end are set, otherwise falls back to the dataset bounds
+ *  echoed in the response. Day 1 — replaces the hardcoded "Last 90 days". */
+function tileWindowHint(
+  kpi: KPISummary,
+  start: string | null,
+  end: string | null,
+): string {
+  if (start && end) return `${start} → ${end}`;
+  if (kpi.period_start && kpi.period_end) {
+    return `${kpi.period_start} → ${kpi.period_end}`;
+  }
+  return "All data";
+}
+
+/** Compute % delta of the recent half vs the prior half of the series.
+ *
+ *  Adaptive window: previously hard-coded to 14d-vs-14d (needed >=28 rows),
+ *  which silently produced no delta on shorter user-picked ranges. Now splits
+ *  the supplied series in half so a 26-day range yields a 13d-vs-13d delta,
+ *  a 7-day range yields a 3d-vs-3d delta, etc. Minimum of 2 points per half
+ *  (4-point series) — below that, delta is genuinely meaningless. */
+function computeDelta(series: number[]): number | undefined {
+  if (!series || series.length < 4) return undefined;
+  const half = Math.floor(series.length / 2);
+  const recent = series.slice(-half);
+  const prior = series.slice(-half * 2, -half);
   const avgRecent = recent.reduce((a, b) => a + b, 0) / recent.length;
   const avgPrior = prior.reduce((a, b) => a + b, 0) / prior.length;
   if (!avgPrior) return undefined;
@@ -118,33 +140,59 @@ export default function Dashboard() {
   const [askLoading, setAskLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "operations" | "logistics" | "sellers" | "forecast" | "alerts" | "ask" | "narratives" | "data" | "settings">("overview");
 
+  // Shared time range — drives /kpi/summary + /kpi/daily.
+  const rangeStart = useTimeRange((s) => s.start);
+  const rangeEnd = useTimeRange((s) => s.end);
+  const setDataAsOf = useTimeRange((s) => s.setDataAsOf);
+
+  // 1) Static fetches (no time-range dependency) — fired once.
   useEffect(() => {
     (async () => {
       try {
-        const [k, d, s, f, c, m, n, a] = await Promise.all([
-          fetchKpiSummary(),
-          fetchDailyKpis(),
+        const [s, f, c, m, n] = await Promise.all([
           fetchSellers(),
           fetchForecast(),
           fetchCategories(),
           fetchMlMetrics(),
           fetchNarrative(),
-          fetchAlerts(),
         ]);
-        setKpi(k);
-        setDaily(d);
         setSellers(s);
         setForecast(f);
         setCategories(c);
         setMlMetrics(m);
         setNarrative(n);
-        setAlerts(a);
       } catch (e) {
         console.error(e);
       }
-      setLoading(false);
     })();
   }, []);
+
+  // 2) Time-range-dependent fetches — re-fire when the picker changes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const range = { start: rangeStart, end: rangeEnd };
+        const [k, d, a] = await Promise.all([
+          fetchKpiSummary(range),
+          fetchDailyKpis(range),
+          fetchAlerts(),
+        ]);
+        if (cancelled) return;
+        setKpi(k);
+        setDaily(d);
+        setAlerts(a);
+        // Seed the store's dataAsOf so the picker knows where Olist actually ends.
+        if (k.data_as_of) setDataAsOf(k.data_as_of);
+      } catch (e) {
+        console.error(e);
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rangeStart, rangeEnd, setDataAsOf]);
 
   const handleAsk = async () => {
     if (!askInput.trim()) return;
@@ -247,17 +295,21 @@ export default function Dashboard() {
   }
 
   /* ─── Status pills ─── */
+  // Hide ROC-AUC / MAPE pills entirely when /ml/metrics returns empty
+  // (no trained models yet). Showing "—" / "—%" looks like a broken UI;
+  // omitting the pills makes the top bar honest.
+  const rocAuc =
+    ml && ml.late_delivery && typeof ml.late_delivery.roc_auc === "number"
+      ? ml.late_delivery.roc_auc.toFixed(2)
+      : null;
+  const mape =
+    ml && ml.forecast && typeof ml.forecast.mape === "number"
+      ? `${ml.forecast.mape}%`
+      : null;
+
   const statusPills = [
-    ml && {
-      label: "ROC-AUC",
-      value: ml.late_delivery?.roc_auc?.toFixed(2) ?? "—",
-      tone: "info" as const,
-    },
-    ml && {
-      label: "MAPE",
-      value: `${ml.forecast?.mape ?? "—"}%`,
-      tone: "info" as const,
-    },
+    rocAuc != null && { label: "ROC-AUC", value: rocAuc, tone: "info" as const },
+    mape != null && { label: "MAPE", value: mape, tone: "info" as const },
     {
       label: "Anomalies",
       value: alerts.length.toString(),
@@ -283,7 +335,13 @@ export default function Dashboard() {
           onAskSubmit={handleAsk}
           askLoading={askLoading}
           status={statusPills}
-          period={kpi ? `${kpi.period_start} → ${kpi.period_end}` : undefined}
+          period={
+            kpi
+              ? rangeStart && rangeEnd
+                ? `${rangeStart} → ${rangeEnd}`
+                : `${kpi.period_start} → ${kpi.period_end}`
+              : undefined
+          }
         />
 
         {/* ───────── PAGE TITLE ───────── */}
@@ -374,10 +432,11 @@ export default function Dashboard() {
               icon={ShoppingCart}
               label="Total Orders"
               value={fmtK(kpi.total_orders)}
-              hint="Last 90 days"
+              hint={tileWindowHint(kpi, rangeStart, rangeEnd)}
               trend={series.orders}
               accent={C.sky}
               delta={series.deltaOrders}
+              partial={kpi.is_partial_period}
               delay="animate-fade-up-1"
             />
             <KpiTile
@@ -388,6 +447,7 @@ export default function Dashboard() {
               trend={series.gmv}
               accent={C.emerald}
               delta={series.deltaGmv}
+              partial={kpi.is_partial_period}
               tone="success"
               delay="animate-fade-up-2"
             />
@@ -399,6 +459,7 @@ export default function Dashboard() {
               trend={series.aov}
               accent={C.teal}
               delta={series.deltaAov}
+              partial={kpi.is_partial_period}
               delay="animate-fade-up-3"
             />
             <KpiTile
@@ -409,6 +470,7 @@ export default function Dashboard() {
               trend={series.otif}
               accent={kpi.otif_rate >= 92 ? C.emerald : C.amber}
               delta={series.deltaOtif}
+              partial={kpi.is_partial_period}
               tone={kpi.otif_rate >= 92 ? "success" : "warning"}
               delay="animate-fade-up-4"
             />
@@ -418,6 +480,7 @@ export default function Dashboard() {
               value={`+${kpi.nps_proxy.toFixed(0)}`}
               hint="Review-derived score"
               accent={C.amber}
+              partial={kpi.is_partial_period}
               delay="animate-fade-up-5"
             />
             <KpiTile
@@ -430,6 +493,7 @@ export default function Dashboard() {
               delta={
                 series.deltaCancel != null ? -series.deltaCancel : undefined
               }
+              partial={kpi.is_partial_period}
               tone={kpi.cancellation_rate > 5 ? "danger" : "success"}
               delay="animate-fade-up-6"
             />
@@ -497,7 +561,10 @@ export default function Dashboard() {
             ) : (
               <ul className="divide-y divide-border/40">
                 {alerts.slice(0, 12).map((a, i) => (
-                  <AlertRow key={i} alert={a} />
+                  <AnomalyCard
+                    key={`${a.metric}-${a.date}-${i}`}
+                    alert={a}
+                  />
                 ))}
               </ul>
             )}
@@ -836,50 +903,6 @@ function LegendDot({ color, label }: { color: string; label: string }) {
         {label}
       </span>
     </span>
-  );
-}
-
-function AlertRow({ alert }: { alert: AnomalyAlert }) {
-  const isCritical = alert.severity === "critical";
-  const isUp = alert.direction === "high";
-
-  return (
-    <li className="group flex items-center gap-3 px-3 py-2.5 hover:bg-[color:var(--surface-2)] transition-colors">
-      <span
-        className={cn(
-          "relative flex h-1.5 w-1.5 shrink-0 rounded-full",
-          isCritical
-            ? "bg-[color:var(--destructive)] text-[color:var(--destructive)]"
-            : "bg-[color:var(--warning)] text-[color:var(--warning)]",
-          "pulse-dot"
-        )}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 text-[0.78rem] font-medium text-foreground truncate">
-          <span>{alert.metric.replace(/_/g, " ")}</span>
-          {isUp ? (
-            <ArrowUpRight className="h-3 w-3 text-[color:var(--warning)]" strokeWidth={2.5} />
-          ) : (
-            <ArrowDownRight className="h-3 w-3 text-[color:var(--destructive)]" strokeWidth={2.5} />
-          )}
-        </div>
-        <div className="flex items-center gap-2 text-[0.66rem] text-muted-foreground tabular">
-          <span>{alert.date}</span>
-          <span className="opacity-40">·</span>
-          <span>z = {alert.z_score}</span>
-        </div>
-      </div>
-      <span
-        className={cn(
-          "tabular text-[0.6rem] font-semibold uppercase tracking-[0.08em] shrink-0",
-          isCritical
-            ? "text-[color:var(--destructive)]"
-            : "text-[color:var(--warning)]"
-        )}
-      >
-        {alert.severity}
-      </span>
-    </li>
   );
 }
 

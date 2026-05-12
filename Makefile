@@ -33,6 +33,12 @@ audit-init:
 alerts-init:
 	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/governance_alerts_migration.sql
 
+actions-init:
+	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/governance_actions_and_outcomes_migration.sql
+
+# Run every governance migration (idempotent — safe to re-run).
+governance-init: audit-init alerts-init actions-init
+
 # ── Replay simulator + Dagster (Day 2) ──
 replay-init:
 	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/replay_state_migration.sql

@@ -1,5 +1,7 @@
 /* ─── API Service Layer ─── */
 import type {
+  ActionHistoryEntry,
+  ActionResponse,
   AnomalyAlert,
   AskResult,
   DailyKPI,
@@ -111,6 +113,101 @@ export async function fetchReplayState(): Promise<ReplayState | null> {
   try {
     const res = await fetchJson<{ data: ReplayState }>(`${API_BASE}/replay/state`);
     return res.data;
+  } catch {
+    return null;
+  }
+}
+
+// ── Action Center (Day 5/6) ────────────────────────────────────────────
+
+/** GET /governance/actions — recent outbound actions for the history panel. */
+export async function fetchActions(subjectRef?: string): Promise<ActionHistoryEntry[]> {
+  try {
+    const qs = subjectRef ? `?subject_ref=${encodeURIComponent(subjectRef)}` : "";
+    const res = await fetchJson<{ entries: ActionHistoryEntry[] }>(
+      `${API_BASE}/governance/actions${qs}`,
+    );
+    return res.entries || [];
+  } catch {
+    return [];
+  }
+}
+
+/** POST /act/email/draft — LLM-drafted email scoped to the subject_ref. */
+export async function draftActionEmail(input: {
+  subject_ref: string;
+  target_role?: "seller" | "internal_ops" | "carrier" | "category_manager";
+  context?: Record<string, unknown>;
+  recipient?: string;
+}): Promise<ActionResponse | null> {
+  try {
+    return await fetchJson<ActionResponse>(`${API_BASE}/act/email/draft`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject_ref: input.subject_ref,
+        target_role: input.target_role ?? "seller",
+        context: input.context ?? {},
+        recipient: input.recipient ?? null,
+      }),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** POST /act/email/send — flip a draft to sent (SMTP optional). */
+export async function sendActionEmail(input: {
+  action_id: number;
+  body?: string;
+  recipient?: string;
+}): Promise<ActionResponse | null> {
+  try {
+    return await fetchJson<ActionResponse>(`${API_BASE}/act/email/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** POST /act/webhook — fire a configured Slack/Linear/Jira webhook. */
+export async function fireActionWebhook(input: {
+  subject_ref: string;
+  channel?: "slack" | "linear" | "jira";
+  title: string;
+  body: string;
+  severity?: "info" | "warning" | "critical";
+}): Promise<ActionResponse | null> {
+  try {
+    return await fetchJson<ActionResponse>(`${API_BASE}/act/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel: input.channel ?? "slack",
+        severity: input.severity ?? "warning",
+        ...input,
+      }),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** POST /act/escalate — write a critical row to governance.alerts. */
+export async function escalateAction(input: {
+  subject_ref: string;
+  severity?: "warning" | "critical";
+  reason: string;
+}): Promise<ActionResponse | null> {
+  try {
+    return await fetchJson<ActionResponse>(`${API_BASE}/act/escalate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ severity: "critical", ...input }),
+    });
   } catch {
     return null;
   }

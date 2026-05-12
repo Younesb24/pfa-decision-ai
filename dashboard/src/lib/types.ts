@@ -67,6 +67,29 @@ export interface AskResult {
   follow_up_questions?: string[];
 }
 
+/** Action Center (Day 5/6) — outbound actions fired against an anomaly. */
+export type ActionType = "email" | "webhook" | "escalation";
+export type ActionStatus = "drafted" | "sent" | "failed" | "cancelled";
+
+export interface ActionResponse {
+  action_id: number | null;
+  status: ActionStatus | null;
+  detail: string | null;
+  generated_at: string;
+}
+
+export interface ActionHistoryEntry {
+  id: number;
+  created_at: string;
+  action_type: string;   // permissive — older rows used legacy values
+  channel: string;
+  subject_ref: string;
+  status: string;
+  title: string | null;
+  payload: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+}
+
 /** Replay-simulator state — drives the dashboard's LIVE pill. */
 export interface ReplayState {
   synthetic_today: string | null;

@@ -23,11 +23,12 @@ from __future__ import annotations
 from dagster import Definitions
 
 from .assets import bronze_replay, dbt_models
+from .learn_sensor import decision_outcome_learn_sensor
 from .schedules import ops_refresh_schedule
 from .sensors import ALL_SENSORS
 
 defs = Definitions(
     assets=[bronze_replay, dbt_models],
     schedules=[ops_refresh_schedule],
-    sensors=ALL_SENSORS,
+    sensors=[*ALL_SENSORS, decision_outcome_learn_sensor],
 )

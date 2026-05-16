@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import os
 import sys
-import warnings
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 

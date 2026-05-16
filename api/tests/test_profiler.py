@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from services.profiler import profile_csv, suggest_table_name
 
 
@@ -57,7 +56,7 @@ def test_profile_empty_file_raises():
 
 
 def test_profile_handles_bom():
-    csv_bytes = "﻿foo,bar\n1,2\n".encode("utf-8")
+    csv_bytes = "﻿foo,bar\n1,2\n".encode()
     p = profile_csv(csv_bytes)
     assert [c.name for c in p.columns] == ["foo", "bar"]
 

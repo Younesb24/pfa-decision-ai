@@ -14,7 +14,6 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from services.auth import (
     CurrentUser,
-    Role,
     get_current_user,
     mint_access_token,
     verify_password,

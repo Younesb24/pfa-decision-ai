@@ -14,7 +14,6 @@ from datetime import UTC, datetime, timedelta
 import jwt as pyjwt
 import pytest
 from fastapi import HTTPException
-
 from services.auth import (
     ALGORITHM,
     SECRET_KEY,
@@ -25,7 +24,6 @@ from services.auth import (
     require_role,
     verify_password,
 )
-
 
 # ── Password hashing ────────────────────────────────────────────────────
 

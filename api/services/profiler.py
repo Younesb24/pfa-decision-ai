@@ -22,7 +22,6 @@ import csv
 import io
 import re
 from dataclasses import dataclass
-from typing import Iterable
 
 MAX_SAMPLE = 1000  # cells per column considered for type inference
 

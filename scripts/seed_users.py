@@ -16,11 +16,14 @@ import os
 import sys
 from pathlib import Path
 
+import psycopg2
+
 # Make `api/` importable so we reuse the same bcrypt helper the runtime uses.
+# The sys.path tweak has to happen before the services.auth import, which is
+# why that one has a lint waiver. psycopg2 is fine at the top.
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "api"))
 
-import psycopg2
 from services.auth import hash_password  # noqa: E402
 
 DEMO_USERS = [

@@ -29,7 +29,6 @@ load_dotenv(Path(__file__).parent / ".env")  # MUST be before router imports
 load_dotenv(Path(__file__).parent.parent / ".env", override=False)
 
 from fastapi import Depends  # noqa: E402
-
 from routers import (  # noqa: E402
     act,
     ask,

@@ -18,10 +18,9 @@ import os
 from pathlib import Path
 
 from db import get_db
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from psycopg2.extras import Json
 from pydantic import BaseModel
-
 from services.profiler import profile_csv, suggest_table_name
 
 router = APIRouter(prefix="/ingest", tags=["Ingest"])

@@ -148,7 +148,15 @@ export default function DataHealthPage() {
 
   const fetchHealth = async () => {
     try {
-      const r = await fetch(`${API_BASE}/data-health/status`);
+      const { getToken } = await import("@/lib/auth");
+      const token = getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const r = await fetch(`${API_BASE}/data-health/status`, { headers });
+      if (r.status === 401) {
+        if (typeof window !== "undefined") window.location.href = "/login?next=/data-health";
+        return;
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data: DataHealth = await r.json();
       setHealth(data);

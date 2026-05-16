@@ -79,3 +79,48 @@ def test_ask_returns_clean_error_without_llm_key(client: TestClient, monkeypatch
     body = rsp.json()
     assert body["error"]
     assert "No LLM provider" in body["error"]
+
+
+# ── Day 10 auth contract ────────────────────────────────────────────────
+
+def test_openapi_schema_exposes_auth_routes(client: TestClient):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/v1/auth/login" in paths
+    assert "/api/v1/auth/me" in paths
+
+
+def test_act_routes_require_auth(client: TestClient):
+    """Without a Bearer token, /act/* must 401 — not silently succeed."""
+    rsp = client.post(
+        "/api/v1/act/webhook",
+        json={"channel": "slack", "subject": "x", "message": "y"},
+    )
+    assert rsp.status_code == 401
+
+
+def test_governance_routes_require_auth(client: TestClient):
+    rsp = client.get("/api/v1/governance/audit")
+    assert rsp.status_code == 401
+
+
+def test_data_health_routes_require_auth(client: TestClient):
+    paths = client.get("/openapi.json").json()["paths"]
+    # Pick any data-health endpoint from the spec to hit unauthenticated.
+    dh = next((p for p in paths if p.startswith("/api/v1/data-health")), None)
+    assert dh is not None, "expected at least one /data-health route"
+    rsp = client.get(dh)
+    assert rsp.status_code == 401
+
+
+def test_auth_login_with_invalid_user_returns_401():
+    """Without a real DB the call should fail cleanly. We accept either 401
+    (DB reachable, no such user) or 500 (DB unreachable in CI). The point is
+    the route exists and is wired. TestClient is configured to NOT re-raise
+    server exceptions so a connect failure surfaces as a 500 response."""
+    from main import app
+    no_raise = TestClient(app, raise_server_exceptions=False)
+    rsp = no_raise.post(
+        "/api/v1/auth/login",
+        json={"email": "nobody@pfa.local", "password": "wrong"},
+    )
+    assert rsp.status_code in {401, 500}

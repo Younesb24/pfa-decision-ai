@@ -1,6 +1,7 @@
 .PHONY: up down logs load-bronze dbt-run dbt-test dbt-docs demo clean \
         install-dev lint type-check test test-all audit-init \
-        replay-init replay-tick dagster-dev install-dagster
+        replay-init replay-tick dagster-dev install-dagster \
+        users-init seed-users auth-init
 
 # ── Docker ──
 up:
@@ -38,6 +39,16 @@ actions-init:
 
 # Run every governance migration (idempotent — safe to re-run).
 governance-init: audit-init alerts-init actions-init
+
+# ── Day 10 — JWT auth ──
+users-init:
+	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/users_migration.sql
+
+seed-users:
+	python scripts/seed_users.py
+
+# Apply schema + seed in one shot.
+auth-init: users-init seed-users
 
 # ── Replay simulator + Dagster (Day 2) ──
 replay-init:

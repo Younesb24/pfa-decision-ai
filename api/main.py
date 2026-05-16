@@ -28,17 +28,21 @@ load_dotenv(Path(__file__).parent / ".env")  # MUST be before router imports
 # are already set.
 load_dotenv(Path(__file__).parent.parent / ".env", override=False)
 
+from fastapi import Depends  # noqa: E402
 from routers import (  # noqa: E402
     act,
     ask,
+    auth,
     data_health,
     governance,
     health,
+    ingest,
     insights,
     kpi,
     ml,
     replay,
 )
+from services.auth import require_role  # noqa: E402
 
 
 @asynccontextmanager
@@ -84,11 +88,38 @@ app.add_middleware(
 
 # ── Routers ──
 app.include_router(health.router, tags=["Health"])
+app.include_router(auth.router, prefix="/api/v1")
 app.include_router(kpi.router, prefix="/api/v1", tags=["KPIs"])
 app.include_router(ml.router, prefix="/api/v1", tags=["ML"])
 app.include_router(ask.router, prefix="/api/v1", tags=["Text-to-SQL"])
 app.include_router(insights.router, prefix="/api/v1", tags=["Insights"])
-app.include_router(governance.router, prefix="/api/v1", tags=["Governance"])
+# Governance/Data Health: any signed-in analyst-or-above can read. Action
+# Center is the only surface that touches outbound channels (email, webhooks,
+# escalations) so it requires `ops` or `admin`. Auth is enforced at router
+# level so a future route added under these prefixes inherits the guard by
+# default — easier to remember than tagging every endpoint individually.
+app.include_router(
+    governance.router,
+    prefix="/api/v1",
+    tags=["Governance"],
+    dependencies=[Depends(require_role("analyst"))],
+)
 app.include_router(replay.router, prefix="/api/v1", tags=["Replay"])
-app.include_router(act.router, prefix="/api/v1", tags=["Act"])
-app.include_router(data_health.router, prefix="/api/v1", tags=["Data Health"])
+app.include_router(
+    act.router,
+    prefix="/api/v1",
+    tags=["Act"],
+    dependencies=[Depends(require_role("ops"))],
+)
+app.include_router(
+    data_health.router,
+    prefix="/api/v1",
+    tags=["Data Health"],
+    dependencies=[Depends(require_role("analyst"))],
+)
+app.include_router(
+    ingest.router,
+    prefix="/api/v1",
+    tags=["Ingest"],
+    dependencies=[Depends(require_role("ops"))],
+)

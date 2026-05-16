@@ -9,8 +9,10 @@ import {
   CheckCircle2,
   Clock,
   Database,
+  FileSpreadsheet,
   RefreshCw,
   ServerCrash,
+  Upload,
   XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -140,15 +142,35 @@ function SectionHeader({
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
+interface SourceEntry {
+  id: number;
+  uploaded_at: string;
+  original_filename: string;
+  size_bytes: number;
+  row_count: number | null;
+  column_count: number | null;
+  suggested_table: string | null;
+  status: string;
+}
+
 export default function DataHealthPage() {
   const [health, setHealth] = useState<DataHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
+  const [sources, setSources] = useState<SourceEntry[] | null>(null);
 
   const fetchHealth = async () => {
     try {
-      const r = await fetch(`${API_BASE}/data-health/status`);
+      const { getToken } = await import("@/lib/auth");
+      const token = getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const r = await fetch(`${API_BASE}/data-health/status`, { headers });
+      if (r.status === 401) {
+        if (typeof window !== "undefined") window.location.href = "/login?next=/data-health";
+        return;
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data: DataHealth = await r.json();
       setHealth(data);
@@ -161,8 +183,31 @@ export default function DataHealthPage() {
     }
   };
 
+  const fetchSources = async () => {
+    try {
+      const { getToken } = await import("@/lib/auth");
+      const token = getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const r = await fetch(`${API_BASE}/ingest/sources?limit=20`, { headers });
+      if (r.status === 401 || r.status === 403) {
+        // Viewer / unauthenticated — just hide the panel rather than redirect;
+        // the rest of /data-health is still useful.
+        setSources([]);
+        return;
+      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = (await r.json()) as { sources: SourceEntry[] };
+      setSources(data.sources);
+    } catch {
+      // Same rationale — soft-fail rather than break the page.
+      setSources([]);
+    }
+  };
+
   useEffect(() => {
     void fetchHealth();
+    void fetchSources();
     const id = setInterval(() => void fetchHealth(), 60_000);
     return () => clearInterval(id);
   }, []);
@@ -428,6 +473,63 @@ export default function DataHealthPage() {
                 </Badge>
               </div>
             ))}
+          </div>
+        </section>
+      )}
+
+      {/* Connected sources (Day 13). Hidden when viewer-role / unauth. */}
+      {sources != null && sources.length > 0 && (
+        <section className="mb-10">
+          <SectionHeader
+            icon={Upload}
+            title="Connected sources"
+            badge={
+              <a
+                href="/ingest"
+                className="text-[0.65rem] uppercase tracking-wide text-primary hover:underline"
+              >
+                Connect new →
+              </a>
+            }
+          />
+          <div className="rounded-xl border border-border/50 bg-[color:var(--surface-1)] overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-[color:var(--surface-2)] text-muted-foreground">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">File</th>
+                  <th className="text-left px-3 py-2 font-medium">Table</th>
+                  <th className="text-right px-3 py-2 font-medium">Rows</th>
+                  <th className="text-right px-3 py-2 font-medium">Cols</th>
+                  <th className="text-left px-3 py-2 font-medium">Status</th>
+                  <th className="text-right px-3 py-2 font-medium">Uploaded</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sources.map((s) => (
+                  <tr key={s.id} className="border-t border-border/50">
+                    <td className="px-3 py-2 font-mono flex items-center gap-1.5">
+                      <FileSpreadsheet className="h-3 w-3 text-muted-foreground" />
+                      <span className="truncate max-w-[220px]">{s.original_filename}</span>
+                    </td>
+                    <td className="px-3 py-2 font-mono">{s.suggested_table ?? "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {s.row_count?.toLocaleString() ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {s.column_count ?? "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className="text-[0.6rem]">
+                        {s.status}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 text-right text-muted-foreground">
+                      {s.uploaded_at.slice(0, 16).replace("T", " ")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       )}

@@ -1,6 +1,8 @@
 .PHONY: up down logs load-bronze dbt-run dbt-test dbt-docs demo clean \
         install-dev lint type-check test test-all audit-init \
-        replay-init replay-tick dagster-dev install-dagster
+        replay-init replay-tick dagster-dev install-dagster \
+        users-init seed-users auth-init ingest-init \
+        prod-up prod-down prod-logs
 
 # ── Docker ──
 up:
@@ -11,6 +13,17 @@ down:
 
 logs:
 	docker compose logs -f
+
+# Prod-parity stack (Day 14). Mirrors the AWS/ECS target: no source mounts,
+# explicit network, healthchecks. Useful before `terraform apply`.
+prod-up:
+	docker compose -f docker-compose.prod.yml up -d --build
+
+prod-down:
+	docker compose -f docker-compose.prod.yml down
+
+prod-logs:
+	docker compose -f docker-compose.prod.yml logs -f
 
 # ── Data ──
 load-bronze:
@@ -38,6 +51,20 @@ actions-init:
 
 # Run every governance migration (idempotent — safe to re-run).
 governance-init: audit-init alerts-init actions-init
+
+# ── Day 10 — JWT auth ──
+users-init:
+	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/users_migration.sql
+
+seed-users:
+	python scripts/seed_users.py
+
+# Apply schema + seed in one shot.
+auth-init: users-init seed-users
+
+# ── Day 12 — Ingest ──
+ingest-init:
+	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/source_registry_migration.sql
 
 # ── Replay simulator + Dagster (Day 2) ──
 replay-init:

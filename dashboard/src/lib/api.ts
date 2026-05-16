@@ -35,8 +35,27 @@ function joinQS(base: string, ...parts: string[]): string {
   return filled.length ? `${base}?${filled.join("&")}` : base;
 }
 
+import { clearAuth, getToken } from "./auth";
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const token = getToken();
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(url, { ...init, headers });
+
+  // A 401 means our token is stale or the user was deleted server-side. Clear
+  // local state so the next render bounces back to /login instead of looping.
+  if (res.status === 401) {
+    clearAuth();
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login";
+    }
+    throw new Error("Unauthorized");
+  }
+
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return res.json();
 }

@@ -37,6 +37,7 @@ from routers import (  # noqa: E402
     data_health,
     governance,
     health,
+    ingest,
     insights,
     kpi,
     ml,
@@ -116,4 +117,10 @@ app.include_router(
     prefix="/api/v1",
     tags=["Data Health"],
     dependencies=[Depends(require_role("analyst"))],
+)
+app.include_router(
+    ingest.router,
+    prefix="/api/v1",
+    tags=["Ingest"],
+    dependencies=[Depends(require_role("ops"))],
 )

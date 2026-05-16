@@ -112,6 +112,18 @@ def test_data_health_routes_require_auth(client: TestClient):
     assert rsp.status_code == 401
 
 
+def test_openapi_schema_exposes_ingest_routes(client: TestClient):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/v1/ingest/upload" in paths
+    assert "/api/v1/ingest/sources" in paths
+
+
+def test_ingest_routes_require_auth(client: TestClient):
+    """Ingest is gated at ops+ — unauthenticated upload must 401."""
+    rsp = client.post("/api/v1/ingest/upload")
+    assert rsp.status_code == 401
+
+
 def test_auth_login_with_invalid_user_returns_401():
     """Without a real DB the call should fail cleanly. We accept either 401
     (DB reachable, no such user) or 500 (DB unreachable in CI). The point is

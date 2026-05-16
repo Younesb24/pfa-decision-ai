@@ -1,7 +1,7 @@
 .PHONY: up down logs load-bronze dbt-run dbt-test dbt-docs demo clean \
         install-dev lint type-check test test-all audit-init \
         replay-init replay-tick dagster-dev install-dagster \
-        users-init seed-users auth-init
+        users-init seed-users auth-init ingest-init
 
 # ── Docker ──
 up:
@@ -49,6 +49,10 @@ seed-users:
 
 # Apply schema + seed in one shot.
 auth-init: users-init seed-users
+
+# ── Day 12 — Ingest ──
+ingest-init:
+	psql -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist} -f scripts/source_registry_migration.sql
 
 # ── Replay simulator + Dagster (Day 2) ──
 replay-init:

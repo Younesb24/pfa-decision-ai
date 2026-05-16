@@ -1,7 +1,8 @@
 .PHONY: up down logs load-bronze dbt-run dbt-test dbt-docs demo clean \
         install-dev lint type-check test test-all audit-init \
         replay-init replay-tick dagster-dev install-dagster \
-        users-init seed-users auth-init ingest-init
+        users-init seed-users auth-init ingest-init \
+        prod-up prod-down prod-logs
 
 # ── Docker ──
 up:
@@ -12,6 +13,17 @@ down:
 
 logs:
 	docker compose logs -f
+
+# Prod-parity stack (Day 14). Mirrors the AWS/ECS target: no source mounts,
+# explicit network, healthchecks. Useful before `terraform apply`.
+prod-up:
+	docker compose -f docker-compose.prod.yml up -d --build
+
+prod-down:
+	docker compose -f docker-compose.prod.yml down
+
+prod-logs:
+	docker compose -f docker-compose.prod.yml logs -f
 
 # ── Data ──
 load-bronze:

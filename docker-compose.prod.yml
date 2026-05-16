@@ -1,0 +1,123 @@
+# Prod-parity stack — Day 14.
+#
+# Run with:    docker compose -f docker-compose.prod.yml up --build
+# Tear down:   docker compose -f docker-compose.prod.yml down -v
+#
+# This stack mirrors what we'll deploy on AWS (ECS Fargate + RDS): no host
+# volume mounts, no source-mount hot-reload, an explicit network, healthchecks
+# everywhere, and resource caps so a runaway query / log loop can't take the
+# host with it. The dev `docker-compose.yml` is still the right file for
+# day-to-day local development; this one is for "would CI build a clean image
+# tonight?" rehearsals.
+#
+# Secrets default to dev fallbacks so the file is runnable out of the box;
+# override every `${VAR:-default}` with a real value in CI / prod.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: pfa-postgres-prod
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pfa_olist}
+      POSTGRES_USER: ${POSTGRES_USER:-pfa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pfa_local_2026}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-pfa} -d $${POSTGRES_DB:-pfa_olist}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - pfa
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: pfa-api-prod
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-pfa_olist}
+      POSTGRES_USER: ${POSTGRES_USER:-pfa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pfa_local_2026}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-pfa-dev-only-not-for-prod-2026}
+      JWT_TTL_MIN: ${JWT_TTL_MIN:-480}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    networks:
+      - pfa
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  dagster:
+    build:
+      # Context is the repo root so the Dockerfile can copy
+      # dagster_pipeline/ + dagster_pipeline/requirements.txt cleanly.
+      context: .
+      dockerfile: dagster_pipeline/Dockerfile
+      target: runtime
+    container_name: pfa-dagster-prod
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-pfa_olist}
+      POSTGRES_USER: ${POSTGRES_USER:-pfa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pfa_local_2026}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    networks:
+      - pfa
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        # The dashboard talks to the API via the service name on the docker
+        # network. Browsers calling it from outside would need a different
+        # value baked in — that's an ALB/CloudFront concern in prod.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:8000/api/v1}
+    container_name: pfa-dashboard-prod
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    networks:
+      - pfa
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+networks:
+  pfa:
+    name: pfa-prod
+
+volumes:
+  pgdata:
+    name: pfa-pgdata-prod

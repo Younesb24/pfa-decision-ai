@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,10 @@ const DEMO_USERS = [
   { email: "viewer@pfa.local", password: "viewer123", role: "viewer" },
 ];
 
-export default function LoginPage() {
+// useSearchParams must live under a Suspense boundary so Next can prerender
+// the page shell without bailing out to client-side rendering. The wrapper
+// at the bottom of this file provides that boundary.
+function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
   const next = search.get("next") || "/";
@@ -113,5 +116,19 @@ export default function LoginPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">
+          Loading…
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

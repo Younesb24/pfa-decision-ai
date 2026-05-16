@@ -213,6 +213,19 @@ export async function escalateAction(input: {
   }
 }
 
+/** POST /ask/agent — tool-using Decision Analyst; returns a structured DecisionBrief. */
+export async function askDecisionAnalyst(question: string): Promise<import("./types").DecisionBrief | null> {
+  try {
+    return await fetchJson<import("./types").DecisionBrief>(`${API_BASE}/ask/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function askQuestion(question: string): Promise<AskResult> {
   try {
     return await fetchJson<AskResult>(`${API_BASE}/ask`, {

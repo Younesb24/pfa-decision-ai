@@ -90,6 +90,45 @@ export interface ActionHistoryEntry {
   result: Record<string, unknown> | null;
 }
 
+/** Decision Analyst agent — structured brief (Day 7/8). */
+export interface Evidence {
+  metric: string;
+  value: string | number;
+  source: string;
+  as_of?: string | null;
+  unit?: string | null;
+}
+
+export interface ChartHint {
+  chart_type: "bar" | "line" | "area";
+  x_key: string;
+  y_key: string;
+  title?: string | null;
+  data: Record<string, unknown>[];
+}
+
+export interface RecommendedAction {
+  label: string;
+  action_type: "email" | "webhook" | "escalation" | "review";
+  urgency: "low" | "medium" | "high";
+  payload: Record<string, unknown>;
+}
+
+export interface DecisionBrief {
+  question: string;
+  what_happened: string;
+  is_it_abnormal: string;
+  why_it_matters: string;
+  evidence: Evidence[];
+  chart_hint?: ChartHint | null;
+  recommended_actions: RecommendedAction[];
+  follow_up_questions: string[];
+  tool_calls_made: string[];
+  generated_at: string;
+  provider?: string | null;
+  model?: string | null;
+}
+
 /** Replay-simulator state — drives the dashboard's LIVE pill. */
 export interface ReplayState {
   synthetic_today: string | null;

@@ -22,6 +22,7 @@ import re
 import time
 from datetime import UTC, datetime
 
+from agents.decision_analyst import analyse
 from db import log_audit, query_gold
 
 # pyrefly: ignore [missing-import]
@@ -30,6 +31,7 @@ from llm_client import complete, get_provider, is_available
 
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
+from schemas.decision_brief import DecisionBrief
 
 router = APIRouter()
 
@@ -344,3 +346,24 @@ async def ask_question_get(
 ) -> AskResponse:
     """GET version of /ask for easy browser testing."""
     return await ask_question(AskRequest(question=q))
+
+
+# ── Tool-using agent endpoint ──────────────────────────────────────────────────
+
+
+class AgentRequest(BaseModel):
+    question: str
+
+
+@router.post("/ask/agent")
+async def ask_agent(req: AgentRequest) -> DecisionBrief:
+    """
+    Tool-using Decision Analyst agent.
+
+    Runs an iterative loop (max 5 tool calls) against the Gold layer, then
+    synthesises a structured DecisionBrief. Every tool call is recorded in
+    governance.audit_log.
+
+    The legacy POST /ask endpoint remains unchanged for backward compatibility.
+    """
+    return analyse(req.question)

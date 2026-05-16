@@ -2,17 +2,17 @@
 
 import * as React from "react";
 import {
-  LayoutDashboard,
   Activity,
+  Bell,
+  BookOpen,
+  Database,
+  LayoutDashboard,
+  MessageSquare,
+  Settings,
+  Sparkles,
+  TrendingUp,
   Truck,
   Users,
-  TrendingUp,
-  Bell,
-  MessageSquare,
-  BookOpen,
-  Settings,
-  Database,
-  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +36,7 @@ const SECONDARY: NavItem[] = [
   { id: "ask", label: "Ask AI", icon: MessageSquare },
   { id: "narratives", label: "Briefings", icon: BookOpen },
   { id: "data", label: "Data", icon: Database },
+  { id: "data-health", label: "Data Health", icon: Activity },
 ];
 
 interface SidebarProps {

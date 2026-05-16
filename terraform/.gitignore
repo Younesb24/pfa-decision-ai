@@ -1,0 +1,9 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Real-secret tfvars — only the example tfvars files (dev/staging/prod with
+# placeholders) should be checked in.
+terraform.*.tfvars
+!terraform.dev.tfvars

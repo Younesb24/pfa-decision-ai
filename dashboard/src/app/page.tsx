@@ -50,7 +50,9 @@ import { TopBar } from "@/components/dashboard/top-bar";
 import { KpiTile, KPI_TONES } from "@/components/dashboard/kpi-tile";
 import { Panel } from "@/components/dashboard/panel";
 import { AnomalyCard } from "@/components/dashboard/anomaly-card";
+import { DecisionBriefCard } from "@/components/dashboard/decision-brief-card";
 import {
+  askDecisionAnalyst,
   askQuestion,
   fetchAlerts,
   fetchCategories,
@@ -67,6 +69,7 @@ import type {
   AnomalyAlert,
   AskResult,
   DailyKPI,
+  DecisionBrief,
   Forecast,
   KPISummary,
   ReplayState,
@@ -150,6 +153,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [askInput, setAskInput] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
+  const [briefResult, setBriefResult] = useState<DecisionBrief | null>(null);
   const [askLoading, setAskLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "operations" | "logistics" | "sellers" | "forecast" | "alerts" | "ask" | "narratives" | "data" | "settings">("overview");
   const [replayState, setReplayState] = useState<ReplayState | null>(null);
@@ -233,16 +237,20 @@ export default function Dashboard() {
     if (!q) return;
     setAskLoading(true);
     setAskResult(null);
-    const r = await askQuestion(q);
-    setAskResult(r);
-    setAskLoading(false);
-    // Fix 2: clear the input after submission so the user sees an empty
-    // search bar with the placeholder, not a stale value that reads as if it
-    // were a hint.
+    setBriefResult(null);
     setAskInput("");
+
+    // Try the tool-using agent first; fall back to legacy text-to-SQL.
+    const brief = await askDecisionAnalyst(q);
+    if (brief) {
+      setBriefResult(brief);
+    } else {
+      const r = await askQuestion(q);
+      setAskResult(r);
+    }
+    setAskLoading(false);
   };
 
-  /** Fix 5: clicking a follow-up chip submits it as a new /ask query. */
   const handleFollowUp = (q: string) => {
     setAskInput(q);
     void handleAsk(q);
@@ -263,6 +271,10 @@ export default function Dashboard() {
   };
 
   const handleNavSelect = (id: string) => {
+    if (id === "data-health") {
+      window.location.href = "/data-health";
+      return;
+    }
     setActiveTab(id as typeof activeTab);
     const target = NAV_TARGETS[id];
     if (!target) return;
@@ -427,22 +439,29 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ───────── ASK RESULT (conditional) ─────────
-            Fix 1: structured Decision Brief-style render. Even on error or
-            empty results, the user sees WHAT the AI tried (the SQL) and
-            WHY it didn't work — never just a safety pill alone. */}
-        {askResult && (
+        {/* ───────── ASK RESULT ─────────
+            Primary: DecisionBriefCard from /ask/agent (tool-using agent).
+            Fallback: legacy Text-to-SQL panel from /ask. */}
+        {briefResult && (
+          <div className="mb-5 animate-fade-up">
+            <DecisionBriefCard
+              brief={briefResult}
+              onFollowUp={handleFollowUp}
+            />
+          </div>
+        )}
+
+        {askResult && !briefResult && (
           <div className="mb-5 animate-fade-up">
             <Panel
               title={askResult.question}
               icon={<MessageSquare className="h-3.5 w-3.5 text-primary" strokeWidth={2.2} />}
               tag={
                 <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wider text-primary ring-1 ring-inset ring-primary/20">
-                  Decision Analyst · Text-to-SQL
+                  Text-to-SQL (fallback)
                 </span>
               }
             >
-              {/* Status line — sits above SQL so the operator sees outcome at a glance. */}
               <div className="mb-3 flex items-center flex-wrap gap-2 text-[0.7rem] tabular">
                 {askResult.error ? (
                   <Badge variant="destructive" className="text-[0.65rem]">
@@ -463,22 +482,11 @@ export default function Dashboard() {
                   </span>
                 )}
               </div>
-
-              {/* SQL — always shown when it exists, regardless of error/empty.
-                  This is what the AI actually did; hiding it hides the AI. */}
-              {askResult.sql ? (
+              {askResult.sql && (
                 <pre className="font-mono text-[0.72rem] text-primary/85 surface-2 rounded-lg p-3.5 ring-1 ring-inset ring-foreground/10 overflow-auto mb-3 leading-relaxed whitespace-pre-wrap">
                   {askResult.sql}
                 </pre>
-              ) : (
-                !askResult.error && (
-                  <p className="text-[0.75rem] text-muted-foreground mb-3">
-                    The model didn&apos;t emit any SQL. Try rephrasing your question.
-                  </p>
-                )
               )}
-
-              {/* Data table */}
               {askResult.data && askResult.data.length > 0 && (
                 <div className="overflow-auto max-h-72 rounded-lg ring-1 ring-inset ring-foreground/10 mb-3">
                   <Table>
@@ -505,14 +513,8 @@ export default function Dashboard() {
                   </Table>
                 </div>
               )}
-
-              {/* Fix 5: follow-up suggestion chips. Backend returns up to 3;
-                  clicking one re-fires /ask with that question. */}
               {askResult.follow_up_questions && askResult.follow_up_questions.length > 0 && (
                 <div className="border-t border-border/60 pt-3 mt-1">
-                  <div className="text-[0.6rem] uppercase tracking-[0.1em] text-muted-foreground/70 mb-2">
-                    Follow up
-                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {askResult.follow_up_questions.map((q, i) => (
                       <button

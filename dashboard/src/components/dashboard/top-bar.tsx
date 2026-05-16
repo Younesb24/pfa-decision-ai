@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateRangePicker } from "./date-range-picker";
+import { UserMenu } from "./user-menu";
 
 interface StatusPill {
   label: string;
@@ -134,6 +135,13 @@ export function TopBar({
             </span>
           </div>
         )}
+
+        {/* Identity + sign-out — only renders client-side after the localStorage
+            read so SSR/CSR hydration agrees that there's no user until we
+            actually know. */}
+        <div className="flex items-center pl-2 lg:pl-3 lg:border-l lg:border-border/60 shrink-0">
+          <UserMenu />
+        </div>
       </div>
     </header>
   );

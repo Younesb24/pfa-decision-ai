@@ -23,11 +23,24 @@ API_DIR = Path(__file__).parent.parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 
-# Stub out db so we can import without a real Postgres connection
+# Stub out db so we can import without a real Postgres connection.
+# Must include ALL names imported by any router (act.py needs get_db,
+# governance.py needs record_review + list_audit_log) to avoid polluting
+# sys.modules when pytest runs multiple test files in the same session.
+from contextlib import contextmanager  # noqa: E402
+
 _db_stub = types.ModuleType("db")
 _db_stub.query_gold = MagicMock(return_value=[])          # type: ignore[attr-defined]
 _db_stub.query_gold_one = MagicMock(return_value=None)    # type: ignore[attr-defined]
 _db_stub.log_audit = MagicMock(return_value=None)         # type: ignore[attr-defined]
+_db_stub.record_review = MagicMock(return_value=None)     # type: ignore[attr-defined]
+_db_stub.list_audit_log = MagicMock(return_value=[])      # type: ignore[attr-defined]
+
+@contextmanager
+def _fake_get_db():
+    yield MagicMock()
+
+_db_stub.get_db = _fake_get_db                            # type: ignore[attr-defined]
 sys.modules.setdefault("db", _db_stub)
 sys.modules.setdefault("psycopg2", MagicMock())
 sys.modules.setdefault("psycopg2.extras", MagicMock())

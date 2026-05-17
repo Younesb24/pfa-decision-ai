@@ -19,25 +19,36 @@ jury.
 
 Days 1–15 (foundation, auth, ingest, Docker, Terraform skeleton) shipped
 via PR #1. Days 16–20 (deploy + ADR-006, Loom script, README + model
-card + one-pager + MAPE fix, blog post, 25-slide deck) shipped this
-session on `claude/beautiful-sutherland-12a3e6`. Pushed to `origin`; PR
-not yet opened.
+card + one-pager + MAPE fix, blog post, 25-slide deck) shipped via
+**PR #4 — merged**. Two follow-up fixes (OpenAI tool-loop translation,
+TLS escape-hatch docs) landed afterwards on `claude/beautiful-sutherland-12a3e6`
+and have been pushed to `origin`. The LLM-powered Decision Brief on the
+dashboard now produces real briefings end-to-end against OpenAI gpt-4o.
 
 ## 2. Current Repository State
 
 - **Active branch:** `claude/beautiful-sutherland-12a3e6`.
-- **HEAD:** `469d924 docs(day20): 25-slide soutenance deck (Marp
-  source) + render guide`.
-- **Tracking:** up to date with
-  `origin/claude/beautiful-sutherland-12a3e6` (already pushed by user).
+- **HEAD:** `bc1925b docs(env): document LLM_INSECURE_TLS / LLM_CA_BUNDLE
+  escape hatches`.
+- **Tracking:** local is **2 commits ahead** of
+  `origin/claude/beautiful-sutherland-12a3e6` until the user runs
+  `git push`.
 - **Working tree:** clean. No staged / unstaged / untracked files.
-- **`main` locally:** `1acc160 Merge pull request #2 from
-  Younesb24/docs/handoff`. Five commits ahead on this branch waiting on
-  PR #3.
-- **PR context:** [PR #1](https://github.com/Younesb24/pfa-decision-ai/pull/1)
-  (Days 10–15) and [PR #2](https://github.com/Younesb24/pfa-decision-ai/pull/2)
-  (Day-15 handoff doc) are merged into `main`. PR #3 (Days 16–20) is
-  **not yet opened** — handoff §9 has the exact `gh pr create` command.
+- **`main` locally on the main repo path:** stale at `1acc160 Merge pull
+  request #2 from Younesb24/docs/handoff` (or older — the main repo
+  worktree is checked out on `docs/handoff` at `3da4f47`, see §6).
+  Run `git fetch && git checkout main && git pull` on the main repo path
+  before branching off main again.
+- **PR context:**
+  - [PR #1](https://github.com/Younesb24/pfa-decision-ai/pull/1) (Days
+    10–15) — merged.
+  - [PR #2](https://github.com/Younesb24/pfa-decision-ai/pull/2)
+    (Day-15 handoff doc) — merged.
+  - [PR #4](https://github.com/Younesb24/pfa-decision-ai/pull/4)
+    (Days 16–20 + Day-20 handoff doc) — **merged**.
+  - **No open PR currently.** The two follow-up fix commits below have
+    been pushed; opening another PR is optional, the work is local-bug
+    territory and can ride the next batch.
 - **Other worktrees on disk** (do not touch unless asked):
   - `.claude/worktrees/busy-wiles-43401b` — PR #1 worktree, branch
     already merged into `main`. 637 MB on disk, mostly
@@ -50,16 +61,17 @@ not yet opened.
 ## 3. Current Code State
 
 ### Works (verified this session)
-- API on `:8000` — health, auth/login + me, KPIs, insights, replay (now
-  with `POST /replay/tick` + token), governance (analyst+), act (ops+),
-  data-health (analyst+), ingest (ops+).
+- API on `:8000` — 26 routes: health, auth/login + me, KPIs, insights,
+  replay (state + tick), governance (analyst+), act (ops+), data-health
+  (analyst+), ingest (ops+), ask + ask/agent.
 - Dashboard on `:3000` — `/`, `/data-health`, `/ingest`, `/login`.
-- **118 pytest tests pass** in `api/` (was 114; +4 replay-tick contract
-  tests added this session).
-- **8 pytest tests pass** in `ml/tests/` (new: pin the safe-MAPE /
-  sMAPE helpers).
-- `python -m ruff check api ml scripts` clean.
-- CI green on `main` from PR #1 + #2.
+- **Decision Brief panel works end-to-end** against OpenAI gpt-4o.
+  Tool calls (`get_kpi_timeseries`, `get_anomalies`) succeed, narrative
+  is generated, evidence cites `gold.agg_daily_ops_kpi`, brief returns
+  via `POST /api/v1/ask/agent`.
+- **118 pytest tests pass** in `api/`. **8 pytest tests pass** in
+  `ml/tests/`. `python -m ruff check api ml scripts` clean.
+- CI green on `main` from PR #1 / #2 / #4.
 
 ### Shipped this session (Days 16-20)
 - `docs/adr/006-aws-over-render.md` — primary deploy is AWS; Render is
@@ -119,12 +131,28 @@ not yet opened.
 - **`docs/one_pager.pdf`** — render with Pandoc before the defense.
 
 ### Broken / known issues
-- **No `ANTHROPIC_API_KEY` in `api/.env`** — agent runs in offline
-  template fallback. Set the key before recording the Loom.
-- **Local `main` is stale only relative to `origin/main` after each
-  merge** — currently in sync because the user pushed and merged PRs
-  #1 and #2. After PR #3 lands, repeat `git fetch && git pull` on
-  `main` before branching for further work.
+- **`governance.users` table doesn't exist on the local Postgres** —
+  `POST /api/v1/auth/login` 500s with `psycopg2.errors.UndefinedTable`.
+  Run `make auth-init` (which executes `scripts/users_migration.sql`
+  + `scripts/seed_users.py`) once. Not blocking the LLM demo because
+  `/ask/agent` isn't auth-gated.
+- **OpenAI behind corporate TLS chain** — Windows schannel cannot do
+  certificate revocation check (`CRYPT_E_NO_REVOCATION_CHECK`), and the
+  openai SDK's certifi bundle won't validate either. Documented escape
+  hatch: `LLM_INSECURE_TLS=1` in `api/.env` (already set on this
+  machine; documented in `.env.example`). **Never** set this in prod.
+  Better long-term fix: export the corporate root cert and set
+  `LLM_CA_BUNDLE=/path/to/corporate-root.pem` instead.
+- **`ANTHROPIC_API_KEY` not yet set on this machine** — agent runs on
+  OpenAI gpt-4o. Set the Anthropic key in `api/.env` before recording
+  the Loom (Anthropic Sonnet is the canonical provider per ADR-001
+  and CLAUDE.md).
+- **Stale local `main`** — the main repo path at
+  `C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai` is
+  checked out on `docs/handoff` at `3da4f47` (pre-Day-10). Working
+  tree there shows ~30 files as "untracked" because they're on
+  newer commits the local checkout never pulled. Run
+  `git fetch && git checkout main && git pull` from that path.
 - **`openapi-typescript`** — removed from `dashboard/package.json`
   during Day 11 because corporate TLS chain blocked `npm install`.
   Re-add when the registry trusts cleanly. Tracked in §6.
@@ -138,6 +166,9 @@ not yet opened.
   repo root to `sys.path` so `from scripts.replay_simulator import
   tick` resolves. Works in dev and in the Docker image because the
   Dockerfile copies the full tree. Verify on first prod deploy.
+- **3 stale worktrees + dashboard build artifacts on disk** —
+  ~3.4 GB of regenerable junk. Cleanup deliberately paused on the
+  user's instruction (2026-05-17); the plan is still in §7.
 
 ## 4. Files Actively Edited (this session)
 
@@ -145,6 +176,16 @@ not yet opened.
 - `api/routers/replay.py` — added token verification + `POST
   /replay/tick`.
 - `api/tests/test_app_smoke.py` — 4 new replay-tick contract tests.
+- `api/llm_client.py` — new `_msgs_to_openai()` translator (symmetric
+  to the Anthropic one). Internal neutral assistant tool_calls were
+  being sent straight to OpenAI's SDK without the required
+  `type="function"` + nested `"function"` wrapper, so the second
+  agent-loop iteration always 400'd. Translator JSON-stringifies
+  arguments and reshapes per-tool-call.
+- `api/agents/decision_analyst.py` — `_build_brief` now coerces
+  unknown `action_type` values (model said `"meeting"`) to `review`
+  and unknown `urgency` to `medium`, so a single vocabulary slip
+  from the LLM doesn't 500 the whole brief.
 - `ml/train_forecast.py` — safe-MAPE + sMAPE + MAE helpers, updated
   metrics dict shape, headline switched to sMAPE.
 - `ml/tests/__init__.py` (new) + `ml/tests/test_forecast_metrics.py`
@@ -167,6 +208,9 @@ not yet opened.
 - `docs/blog/why_your_llm_should_never_calculate.md` (new).
 - `docs/deck/soutenance.md` (new) + `docs/deck/README.md` (new).
 - `docs/img/.gitkeep` (new).
+- `handoff_after_day20.md` (new — this doc).
+- `.env.example` — documents `LLM_INSECURE_TLS` and `LLM_CA_BUNDLE`
+  escape hatches with a "never set in prod" warning.
 
 ## 5. Commands Run
 
@@ -175,16 +219,27 @@ not yet opened.
 - `python -m pytest tests/ -x --tb=short -q` (from `ml/`) → **8
   passed**.
 - `python -m ruff check api ml scripts` → all checks passed.
-- `python -m ruff check api/routers/replay.py
-  api/tests/test_app_smoke.py` → all checks passed.
-- `git add … && git commit -m "..."` × 5 (Days 16, 17, 18, 19, 20).
-  All commits on `claude/beautiful-sutherland-12a3e6`.
-- `git status`, `git log`, `git diff` for inspection.
-- `du -sh .[!.]* *` in repo root → identified 3.4 GB of regenerable
-  junk (worktrees, `node_modules`, `.next`).
+- `git add … && git commit -m "..."` × 7 (Days 16, 17, 18, 19, 20 +
+  post-Day-20 handoff + LLM fix-up + env-doc). All commits on
+  `claude/beautiful-sutherland-12a3e6`.
+- `wmic process where "name='python.exe'" get ProcessId,CommandLine` —
+  found a zombie uvicorn worker (PID 34392, parent_pid=13048) holding
+  `:8000`. `taskkill /F /PID 34392` released the socket.
+- Diagnosis loop on the "Decision Brief — LLM provider not configured"
+  bug — three causal layers, fixed in order:
+  1. Wrong uvicorn was serving (pre-Day-10 main.py). Killed the
+     zombie worker; restarted from this worktree.
+  2. OpenAI SDK "Connection error" → corporate TLS chain. Added
+     `LLM_INSECURE_TLS=1` to `api/.env`; documented in
+     `.env.example`.
+  3. OpenAI second-iteration 400 (`Missing required parameter:
+     'messages[N].tool_calls[0].type'`) → patched `llm_client.py`
+     with `_msgs_to_openai()`.
+- Direct `OpenAI(http_client=httpx.Client(verify=False)).chat.completions.create`
+  call from Python confirmed `verify=False` works → proved TLS was
+  the blocker, not network/key/quota.
 - **User-run:** `git push -u origin claude/beautiful-sutherland-12a3e6`
-  before this handoff was written. `origin/claude/beautiful-
-  sutherland-12a3e6` is now at HEAD.
+  and `gh pr create` for PR #4.
 
 ### Not run (deliberately)
 - **`git push`** / **`gh pr create`** / **`git pull`** / **`git
@@ -209,6 +264,31 @@ not yet opened.
 
 ## 6. Failed Attempts / Do Not Repeat
 
+- **Do not** assume `Stop-Process -Id <reloader-pid> -Force` kills the
+  child uvicorn worker on Windows — it does not. The child becomes
+  parentless and keeps holding `:8000`. The reliable kill is via
+  `wmic process where ... get ProcessId,CommandLine`, find the
+  `multiprocessing.spawn ... parent_pid=<dead>` child, then
+  `taskkill /F /PID <child>`. Or run uvicorn without `--reload` while
+  diagnosing port issues.
+- **Do not** send the internal neutral `tool_calls` shape directly to
+  OpenAI's SDK. OpenAI requires
+  `{"id","type":"function","function":{"name","arguments":"<json-string>"}}`.
+  The neutral `{"id","name","arguments":{...}}` shape produces
+  `Missing required parameter: 'messages[N].tool_calls[0].type'`.
+  Use `_msgs_to_openai()` in `api/llm_client.py`.
+- **Do not** trust the OpenAI SDK's bare `"Connection error"` string —
+  it hides the underlying TLS / network exception. Reproduce the call
+  with `httpx.Client(verify=False)` to confirm a TLS-interception
+  cause before blaming the key or quota.
+- **Do not** strip the `LLM_INSECURE_TLS` knob from `api/llm_client.py`
+  "because it's insecure." The codebase documents it as local-dev-only
+  in `.env.example`; production runs in ECS where certifi works out of
+  the box and the knob is irrelevant.
+- **Do not** edit `RecommendedAction.action_type` to be a free-form
+  string. The enum constraint protects downstream `/act/*` routers
+  from acting on a model hallucination. Instead, coerce unknown values
+  to `review` in `_build_brief` — already done.
 - **Do not** add `Co-Authored-By: Claude`, "🤖 Generated with Claude
   Code", or any AI attribution to commits or PR bodies. The repo was
   deleted and recreated once over this. Hard rule.
@@ -256,23 +336,39 @@ not yet opened.
 - **No Loom recording.** Script is ready (`docs/demo_script.md`),
   recording is the user's job.
 - **No real hero screenshot.** `docs/img/hero.png` is a placeholder.
-- **`ANTHROPIC_API_KEY` absent on the production task.** Agent runs in
-  template fallback — fine for tests, off-message for the Loom. Set
-  before recording.
+- **`ANTHROPIC_API_KEY` absent on this machine.** Agent runs on
+  OpenAI gpt-4o currently. Off-message for the Loom (the deck and
+  blog post say "Claude Sonnet"). Set the Anthropic key in
+  `api/.env`, restart uvicorn, re-test before recording.
+- **`governance.users` migration not run on this machine.** Login
+  endpoint 500s. Run `make auth-init`. Not blocking the LLM demo
+  because `/ask/agent` isn't gated.
 - **Forecast MAPE / late-delivery F1** — known weaknesses, but no
   longer hidden. Disclosed in `docs/model_card.md`; metric bug fix is
   pinned by `ml/tests/test_forecast_metrics.py`. Not blockers; "ack in
   the model card, acknowledge in the slides."
-- **`PR #3` not opened.** Branch is pushed; user must run `gh pr
-  create` per §9.
+- **Two follow-up commits not yet pushed.** `2ff4a76` (LLM fix-up)
+  and `bc1925b` (env docs) sit on `claude/beautiful-sutherland-12a3e6`
+  ahead of `origin`. Push with `git push`. PR is optional.
 
 ## 8. Next Steps
 
 In order. Each step has a checklist of pass/fail in §10.
 
-1. **Open PR #3** (Days 16-20). Exact command in §9. Wait for CI to go
-   green (Python + dbt + Frontend jobs). Merge into `main`.
-2. **Decide repo cleanup scope** — full prune of stale worktrees +
+1. **Push the two fix-up commits.** `git push` from the worktree.
+   PR is optional — the work is local-bug territory. If batching
+   another PR, the existing PR-body template in the prior §9 works.
+2. **Seed `governance.users`.** `make auth-init` from the main repo
+   path once it's synced — see step 4. Login then works at
+   `ops@pfa.local / ops123`.
+3. **Set `ANTHROPIC_API_KEY` in `api/.env`** and restart uvicorn so
+   the demo runs on the canonical Claude path (matches the deck
+   narrative). Verify with one `/ask/agent` call; provider should
+   come back as `"anthropic"`.
+4. **Sync local `main`** on the main repo path:
+   `git fetch && git checkout main && git pull --ff-only origin main`.
+   The current local HEAD is far behind merged work.
+5. **Decide repo cleanup scope** — full prune of stale worktrees +
    `.next` + `node_modules` + tool caches (3.4 GB freed) vs. caches
    only (1.3 GB). Move the 6 root-level planning .md files into
    `docs/planning/` (or delete from working tree, keep in git
@@ -299,35 +395,36 @@ In order. Each step has a checklist of pass/fail in §10.
 
 ## 9. Exact Next Commands
 
-Run from a fresh PowerShell at the **main repo path**
-(`C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai`), not
-from a worktree.
+Run from PowerShell. Step 0 is the immediate push of the fix-up
+commits; the rest are from the **main repo path**
+(`C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai`).
 
 ```powershell
-# 1. Open PR #3 — branch is already pushed.
+# 0. Push the two fix-up commits sitting on claude/beautiful-sutherland-12a3e6.
+#    From the worktree:
+git push
+```
+
+Optional PR for the fix-up commits (skip if batching with later work):
+
+```powershell
 gh pr create --base main --head claude/beautiful-sutherland-12a3e6 `
-  --title "Days 16-20 — ADR-006, deploy runbook, demo script, model card, blog, deck" `
+  --title "fix(llm): OpenAI tool-loop + TLS escape-hatch docs" `
   --body @'
 ## Summary
-- Day 16 — ADR-006 (AWS primary, Render kill-switch), terraform/eventbridge.tf fixed to use aws_cloudwatch_event_api_destination, POST /api/v1/replay/tick with X-Replay-Token auth, docs/day16_deploy_runbook.md.
-- Day 17 — docs/demo_script.md (3-min Loom, OTIF crisis spine).
-- Day 18 — README hero + 7-surfaces grid + Loom/live-URL placeholders, docs/one_pager.md (Pandoc A4 source), docs/model_card.md (honest disclosure on F1 + MAPE bug).
-- Day 18 bonus — ml/train_forecast.py MAPE eval bug fixed (floored MAPE + sMAPE + MAE); 8 regression tests in ml/tests/test_forecast_metrics.py pin the helpers.
-- Day 19 — docs/blog/why_your_llm_should_never_calculate.md (~1300 words).
-- Day 20 — docs/deck/soutenance.md (25-slide Marp deck with speaker notes + per-slide timing budgets) + render guide.
+- Fix complete_with_tools (OpenAI branch) — translate the internal neutral tool_calls format to OpenAI's required {type:"function", function:{...}} shape. Previously the second loop iteration always 400'd with "Missing required parameter: messages[N].tool_calls[0].type".
+- Make _build_brief schema-tolerant — coerce unknown action_type/urgency values (model said "meeting") to safe defaults so a single LLM vocabulary slip doesn't 500 the brief.
+- Document LLM_INSECURE_TLS and LLM_CA_BUNDLE in .env.example with a prod-warning. The escape hatches were already wired in api/llm_client.py but undocumented.
 
 ## Test plan
-- [x] python -m pytest -x in api/ -> 118 passed (was 114, +4 replay-tick contract tests)
-- [x] python -m pytest -x in ml/  -> 8 passed (new MAPE/sMAPE helpers)
+- [x] python -m pytest -x in api/ -> 118 passed
 - [x] python -m ruff check api ml scripts -> clean
-- [ ] terraform fmt && terraform validate in terraform/ (no Terraform CLI in dev sandbox)
-- [ ] npx marp render docs/deck/soutenance.md -> soutenance.pdf
-- [ ] pandoc docs/one_pager.md -> soutenance.pdf
-- [ ] Replace YOUR-LOOM-ID and YOUR-PUBLIC-URL placeholders across README.md, docs/one_pager.md, docs/blog/why_your_llm_should_never_calculate.md, docs/deck/soutenance.md once the Loom and deploy are live.
+- [x] POST /api/v1/ask/agent end-to-end returns full DecisionBrief with real Gold-table evidence + LLM narrative.
 '@
 ```
 
-After PR #3 merges, sync local `main`:
+Sync local `main` on the main repo path (it's stuck at `3da4f47` /
+`docs/handoff`):
 
 ```powershell
 cd C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai
@@ -337,17 +434,47 @@ git pull --ff-only origin main
 git log --oneline -5
 ```
 
-To verify the stack still boots locally before Day-16 deploy:
+Seed the auth schema so login works:
 
 ```powershell
-# Terminal 1
-cd C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai\api
-python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+make auth-init
+```
 
-# Terminal 2
-cd C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai\dashboard
+Start (or restart) uvicorn from this worktree — **not** from the main
+repo path (its `api/main.py` is still pre-Day-10 until you pull
+above). Don't use `--reload` while debugging port issues; the worker
+child becomes orphaned if the reloader dies:
+
+```powershell
+cd C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai\.claude\worktrees\beautiful-sutherland-12a3e6\api
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+If `:8000` is held by a zombie from a previous run:
+
+```powershell
+wmic process where "name='python.exe'" get ProcessId,CommandLine | findstr "main:app multiprocessing.spawn"
+taskkill /F /PID <PID-from-above>
+```
+
+Dashboard:
+
+```powershell
+cd C:\Users\yb360\.gemini\antigravity\scratch\pfa-decision-ai\.claude\worktrees\beautiful-sutherland-12a3e6\dashboard
 npm run dev
 ```
+
+Verify the LLM path returns real data (not the "LLM provider not
+configured" fallback):
+
+```powershell
+curl.exe -s -X POST http://127.0.0.1:8000/api/v1/ask/agent -H "Content-Type: application/json" -d '{\"question\":\"What is the current OTIF rate trend?\"}'
+```
+
+Expected: a JSON body with `"provider": "anthropic"` (or `"openai"`),
+non-empty `evidence`, and a `chart_hint.data` array with ~30 OTIF
+rows. If `what_happened` starts with "LLM provider not configured"
+or "Agent error: Connection error", see §3 / §6.
 
 For Day-16 first apply (read `terraform/README.md` and
 `docs/day16_deploy_runbook.md` first):
@@ -389,6 +516,10 @@ The defense is ready when all of the following are true:
 - [ ] **CI on `main`** is green.
 - [ ] **Honest disclosure** lives in `docs/model_card.md` and the
       model-card section of `README.md` — not hidden, not buried.
+- [ ] **`/api/v1/ask/agent` returns a real DecisionBrief** on the
+      public URL — `provider` is `anthropic` (or `openai`), `evidence`
+      cites `gold.*`, and `chart_hint.data` is non-empty. No "LLM
+      provider not configured" / "Agent error: Connection error".
 - [ ] **No secrets** in any committed file (`api/.env`, the new
       `replay_tick_token` and `jwt_secret` vars, `ANTHROPIC_API_KEY`).
       Verified by `git grep -nE "(sk-|AKIA|password\s*=\s*['\"])"` on

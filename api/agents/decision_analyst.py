@@ -136,13 +136,22 @@ def _build_brief(
         )
 
     actions: list[RecommendedAction] = []
+    allowed_action_types = {"email", "webhook", "escalation", "review"}
+    allowed_urgency = {"low", "medium", "high"}
     for a in raw.get("recommended_actions", [])[:3]:
         if isinstance(a, dict):
+            # The model gets creative with action_type ("meeting", "call", etc.)
+            # — coerce anything outside the schema enum to "review" so a single
+            # vocabulary slip doesn't 500 the whole brief.
+            raw_at = str(a.get("action_type", "review")).lower()
+            action_type = raw_at if raw_at in allowed_action_types else "review"
+            raw_u = str(a.get("urgency", "medium")).lower()
+            urgency = raw_u if raw_u in allowed_urgency else "medium"
             actions.append(RecommendedAction(
                 label=str(a.get("label", "Review")),
-                action_type=a.get("action_type", "review"),
-                urgency=a.get("urgency", "medium"),
-                payload=a.get("payload", {}),
+                action_type=action_type,
+                urgency=urgency,
+                payload=a.get("payload", {}) if isinstance(a.get("payload"), dict) else {},
             ))
 
     follow_ups = [str(q) for q in raw.get("follow_up_questions", []) if q][:3]

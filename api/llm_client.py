@@ -163,6 +163,58 @@ def _to_anthropic_tools(tools: list[dict]) -> list[dict]:
     return result
 
 
+def _msgs_to_openai(messages: list[dict]) -> list[dict]:
+    """Translate neutral message format to OpenAI's chat-completions shape.
+
+    Neutral format (also what `_msgs_to_anthropic` consumes):
+      assistant w/ tool_calls: {"role":"assistant","content":None,
+                               "tool_calls":[{"id","name","arguments":{}}]}
+      tool result:             {"role":"tool","tool_call_id","name","content"}
+
+    OpenAI required shape for the assistant turn:
+      {"role":"assistant","content":None,
+       "tool_calls":[{"id","type":"function",
+                      "function":{"name","arguments":"<json-string>"}}]}
+
+    Without this translation OpenAI rejects with:
+      Missing required parameter: 'messages[N].tool_calls[0].type'
+    """
+    out: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "assistant" and m.get("tool_calls"):
+            out.append({
+                "role": "assistant",
+                "content": m.get("content"),  # usually None on tool-call turns
+                "tool_calls": [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": (
+                                tc["arguments"]
+                                if isinstance(tc["arguments"], str)
+                                else json.dumps(tc["arguments"], default=str)
+                            ),
+                        },
+                    }
+                    for tc in m["tool_calls"]
+                ],
+            })
+        elif role == "tool":
+            # OpenAI doesn't require `name` on tool messages, but accepts it.
+            out.append({
+                "role": "tool",
+                "tool_call_id": m["tool_call_id"],
+                "content": m.get("content", ""),
+            })
+        else:
+            # user / assistant-text / system pass through unchanged
+            out.append(m)
+    return out
+
+
 def _to_openai_tools(tools: list[dict]) -> list[dict]:
     """Convert neutral-format schemas to OpenAI function-calling format."""
     return [
@@ -305,8 +357,12 @@ def complete_with_tools(
             **({"http_client": _http} if _http else {}),
         )
         oai_tools = _to_openai_tools(tools)
-        # OpenAI messages use the same format we already have
-        oai_messages: list[Any] = [{"role": "system", "content": system}, *messages]
+        # Translate neutral assistant/tool turns to OpenAI's required shape
+        # (each tool_call needs type="function" + a "function" wrapper).
+        oai_messages: list[Any] = [
+            {"role": "system", "content": system},
+            *_msgs_to_openai(messages),
+        ]
 
         resp = client.chat.completions.create(
             model=_OPENAI_MODEL,

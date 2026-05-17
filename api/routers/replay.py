@@ -1,6 +1,6 @@
 """
-Replay-state endpoint — exposes the synthetic-clock cursor so the dashboard
-header can render "Last refresh: 2 min ago · synthetic_today = 2018-04-12".
+Replay endpoints — read state for the dashboard "LIVE" pill, and advance the
+synthetic clock from EventBridge (prod) or the local Dagster schedule (dev).
 
 Backed by the `replay.state` + `replay.run` tables seeded in
 scripts/replay_state_migration.sql. Returns a graceful "uninitialised" payload
@@ -9,13 +9,23 @@ when the schema isn't installed yet (fresh dev DB) so the frontend never 500s.
 
 from __future__ import annotations
 
+import logging
+import os
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 from db import query_gold_one
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# scripts/replay_simulator.py is sibling to api/ — add the repo root once.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 
 class ReplayState(BaseModel):
@@ -108,4 +118,73 @@ async def get_replay_state() -> ReplayStateResponse:
     return ReplayStateResponse(
         data=state,
         generated_at=datetime.now(UTC).isoformat(),
+    )
+
+
+class ReplayTickResponse(BaseModel):
+    status: str = Field(description="success | noop | failed")
+    synthetic_today: str | None = None
+    next_synthetic_today: str | None = None
+    run_id: int | None = None
+    rows: dict[str, int] | None = None
+
+
+def _verify_replay_token(provided: str | None) -> None:
+    """Compare the inbound header against REPLAY_TICK_TOKEN.
+
+    Missing env var → endpoint is disabled (returns 503). This is the safer
+    default: a deploy that forgot to set the secret should NOT accept anonymous
+    ticks. The local dev path passes the token explicitly when calling the
+    function directly from Dagster.
+    """
+    expected = os.environ.get("REPLAY_TICK_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="REPLAY_TICK_TOKEN not configured; /replay/tick is disabled.",
+        )
+    if not provided or provided.strip() != expected:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-Replay-Token.",
+        )
+
+
+@router.post("/replay/tick", response_model=ReplayTickResponse)
+async def post_replay_tick(
+    x_replay_token: str | None = Header(default=None, alias="X-Replay-Token"),
+) -> ReplayTickResponse:
+    """Advance the synthetic clock by one day.
+
+    Authenticated via a shared secret in the `X-Replay-Token` header — same
+    value EventBridge sends from `aws_cloudwatch_event_connection.replay_tick`.
+    The endpoint is intentionally *not* in the JWT-protected router: it's a
+    machine-to-machine path and uses a separate credential.
+    """
+    _verify_replay_token(x_replay_token)
+
+    try:
+        from scripts.replay_simulator import tick
+    except ImportError as exc:  # pragma: no cover - env-specific
+        logger.exception("replay_simulator import failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"replay_simulator unavailable: {exc}",
+        ) from exc
+
+    try:
+        result = tick()
+    except Exception as exc:
+        logger.exception("replay tick failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"replay tick failed: {exc}",
+        ) from exc
+
+    return ReplayTickResponse(
+        status=result.status,
+        synthetic_today=str(result.synthetic_today),
+        next_synthetic_today=str(result.next_synthetic_today),
+        run_id=result.run_id,
+        rows=result.rows,
     )

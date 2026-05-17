@@ -124,6 +124,36 @@ def test_ingest_routes_require_auth(client: TestClient):
     assert rsp.status_code == 401
 
 
+# ── Day 16 replay-tick contract ─────────────────────────────────────────
+
+def test_replay_tick_route_exists(client: TestClient):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/v1/replay/tick" in paths, "replay tick must be on the schema"
+    assert "post" in paths["/api/v1/replay/tick"]
+
+
+def test_replay_tick_503_when_token_unset(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """No env secret = endpoint disabled. Anonymous internet hits must not advance the clock."""
+    monkeypatch.delenv("REPLAY_TICK_TOKEN", raising=False)
+    rsp = client.post("/api/v1/replay/tick")
+    assert rsp.status_code == 503
+
+
+def test_replay_tick_401_on_wrong_token(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("REPLAY_TICK_TOKEN", "correct-horse-battery-staple")
+    rsp = client.post(
+        "/api/v1/replay/tick",
+        headers={"X-Replay-Token": "guessing-game"},
+    )
+    assert rsp.status_code == 401
+
+
+def test_replay_tick_401_when_token_missing(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("REPLAY_TICK_TOKEN", "correct-horse-battery-staple")
+    rsp = client.post("/api/v1/replay/tick")
+    assert rsp.status_code == 401
+
+
 def test_auth_login_with_invalid_user_returns_401():
     """Without a real DB the call should fail cleanly. We accept either 401
     (DB reachable, no such user) or 500 (DB unreachable in CI). The point is

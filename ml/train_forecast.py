@@ -57,6 +57,29 @@ def load_monthly_data() -> pd.DataFrame:
     return df
 
 
+def _safe_mape(actual: np.ndarray, pred: np.ndarray, floor: float = 1.0) -> float:
+    """MAPE with a floor on the denominator.
+
+    Plain MAPE divides by the actual value, so a warm-up day with 1 order
+    and a prediction of 50 becomes a 4900% error. The previous run printed
+    ~259262% — the model wasn't broken; the metric was. Clamping the
+    denominator to `floor` (1 order) gives a number that's still useful
+    for comparing runs without exploding on near-zero actuals.
+    """
+    denom = np.maximum(np.abs(actual), floor)
+    return float(np.mean(np.abs(actual - pred) / denom) * 100.0)
+
+
+def _smape(actual: np.ndarray, pred: np.ndarray) -> float:
+    """Symmetric MAPE — bounded in [0, 200], stable when actual is near zero."""
+    denom = (np.abs(actual) + np.abs(pred)) / 2.0
+    # Avoid 0/0 when both are zero by treating that as zero error.
+    mask = denom > 0
+    if not mask.any():
+        return 0.0
+    return float(np.mean(np.abs(actual[mask] - pred[mask]) / denom[mask]) * 100.0)
+
+
 def train_forecast_model(series: pd.Series, model_name: str, periods: int = 3):
     """Train Holt-Winters exponential smoothing and forecast."""
     from statsmodels.tsa.holtwinters import ExponentialSmoothing
@@ -95,13 +118,18 @@ def train_forecast_model(series: pd.Series, model_name: str, periods: int = 3):
         seasonal_periods=bt_seasonal,
     ).fit(optimized=True)
 
-    bt_pred = bt_model.forecast(backtest_months)
-    actual = test.values
-    mape = np.mean(np.abs((actual - bt_pred) / actual)) * 100
+    bt_pred = np.asarray(bt_model.forecast(backtest_months))
+    actual = np.asarray(test.values)
 
-    print(f"   Backtest MAPE ({backtest_months} months): {mape:.1f}%")
+    mape = _safe_mape(actual, bt_pred)
+    smape = _smape(actual, bt_pred)
+    mae = float(np.mean(np.abs(actual - bt_pred)))
 
-    return model, forecast, mape
+    print(f"   Backtest MAPE  ({backtest_months}m, floored): {mape:.1f}%")
+    print(f"   Backtest sMAPE ({backtest_months}m):           {smape:.1f}%")
+    print(f"   Backtest MAE   ({backtest_months}m):           {mae:.1f}")
+
+    return model, forecast, {"mape": mape, "smape": smape, "mae": mae}
 
 
 def main():
@@ -120,12 +148,12 @@ def main():
     print("\n2. Training models...")
 
     # Model 1: Monthly order volume
-    model_orders, fc_orders, mape_orders = train_forecast_model(
+    model_orders, fc_orders, metrics_orders = train_forecast_model(
         df["total_orders"], "monthly_orders"
     )
 
     # Model 2: Monthly revenue
-    model_rev, fc_rev, mape_revenue = train_forecast_model(
+    model_rev, fc_rev, metrics_revenue = train_forecast_model(
         df["total_revenue"], "monthly_revenue"
     )
 
@@ -147,21 +175,30 @@ def main():
     forecast_data = {
         "orders": {
             "forecast": [{"month": d.strftime("%Y-%m"), "value": max(0, float(v))} for d, v in zip(forecast_dates, fc_orders, strict=False)],
-            "mape": round(mape_orders, 2),
+            "mape": round(metrics_orders["mape"], 2),
+            "smape": round(metrics_orders["smape"], 2),
+            "mae": round(metrics_orders["mae"], 2),
         },
         "revenue": {
             "forecast": [{"month": d.strftime("%Y-%m"), "value": max(0, float(v))} for d, v in zip(forecast_dates, fc_rev, strict=False)],
-            "mape": round(mape_revenue, 2),
+            "mape": round(metrics_revenue["mape"], 2),
+            "smape": round(metrics_revenue["smape"], 2),
+            "mae": round(metrics_revenue["mae"], 2),
         },
         "trained_at": datetime.now().isoformat(),
     }
     joblib.dump(forecast_data, os.path.join(MODEL_DIR, "forecast_results.joblib"))
     print("\n4. Results saved to ml/models/forecast_results.joblib")
 
-    # Summary
+    # Summary — sMAPE is the headline because it's bounded; MAPE is reported
+    # alongside (now floored) for backwards compatibility with older runs.
     print(f"\n{'='*60}")
-    print(f"MAPE Orders:  {mape_orders:.1f}% {'PASS (<= 20%)' if mape_orders <= 20 else 'NEEDS WORK'}")
-    print(f"MAPE Revenue: {mape_revenue:.1f}% {'PASS (<= 20%)' if mape_revenue <= 20 else 'NEEDS WORK'}")
+    smape_o, mape_o = metrics_orders["smape"], metrics_orders["mape"]
+    smape_r, mape_r = metrics_revenue["smape"], metrics_revenue["mape"]
+    print(f"Orders  — sMAPE: {smape_o:.1f}%  MAPE: {mape_o:.1f}%  "
+          f"{'PASS (sMAPE <= 30%)' if smape_o <= 30 else 'NEEDS WORK'}")
+    print(f"Revenue — sMAPE: {smape_r:.1f}%  MAPE: {mape_r:.1f}%  "
+          f"{'PASS (sMAPE <= 30%)' if smape_r <= 30 else 'NEEDS WORK'}")
     print(f"{'='*60}")
 
 

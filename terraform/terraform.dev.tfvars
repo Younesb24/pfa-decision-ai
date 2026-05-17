@@ -19,4 +19,8 @@ dagster_image_tag   = "latest"
 # staging/prod with `openssl rand -hex 32`.
 jwt_secret = "pfa-dev-only-not-for-prod-2026"
 
-enable_replay_schedule = true
+# First apply: leave the EventBridge schedule off so the failure surface is
+# just ECS + RDS + ALB. Flip to true (and set replay_tick_token) once the API
+# target group is healthy on the public DNS.
+enable_replay_schedule = false
+# replay_tick_token = ""  # openssl rand -hex 32

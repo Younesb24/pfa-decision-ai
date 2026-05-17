@@ -72,5 +72,16 @@ variable "jwt_secret" {
 variable "enable_replay_schedule" {
   description = "Whether to create the EventBridge rule that pings /replay/tick every 15 min."
   type        = bool
-  default     = true
+  default     = false
+}
+
+variable "replay_tick_token" {
+  description = <<-EOT
+    Shared secret EventBridge sends as X-Replay-Token on the /replay/tick
+    call. The API verifies it before advancing the replay clock so a random
+    internet hit can't drive the loop. Generate with `openssl rand -hex 32`.
+  EOT
+  type        = string
+  sensitive   = true
+  default     = ""
 }

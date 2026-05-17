@@ -1,12 +1,47 @@
-# Olist Decision AI
+# PFA Decision AI
 
 > **AI-powered decision support for e-commerce marketplace operations.**
-> PFA — *Outils IA pour l'aide à la décision en entreprise*.
+> PFA — *Outils IA pour l'aide à la décision en entreprise*. ENSAO MGSI 2026.
 
 End-to-end system that turns the Olist Brazilian E-Commerce dataset into KPIs,
 ML predictions, anomaly alerts, persona-tailored executive narratives, and an
 audited human-in-the-loop review surface — all served behind a typed FastAPI +
 Next.js stack.
+
+---
+
+## Demo
+
+<!-- Replace this image with a real screenshot of the OTIF dashboard once the
+     live URL is up. Loom link replaces YOUR-LOOM-ID after Day-17 recording. -->
+
+![Dashboard hero — OTIF + alerts + briefing](docs/img/hero.png)
+
+▶ **3-min walkthrough (OTIF crisis):**
+<https://www.loom.com/share/YOUR-LOOM-ID>
+
+🌐 **Live demo:** <https://YOUR-PUBLIC-URL> · sign in with `ops@pfa.local / ops123`
+
+The Loom narrates the full OODA loop end-to-end: anomaly fires → LLM
+explains it on top of pre-computed KPIs → operator acknowledges the alert →
+decision lands in the audit journal. Script in [docs/demo_script.md](docs/demo_script.md).
+
+---
+
+## The seven surfaces
+
+| # | Surface | What the user sees | Built from |
+|---|---|---|---|
+| 1 | **KPI summary** | OTIF, AOV, NPS proxy, cancel rate — persona-highlighted | `agg_daily_ops_kpi`, `agg_seller_scorecard` |
+| 2 | **Daily timeseries + chart** | One chart per KPI, replay-clock aware | `fct_orders` × `dim_date` |
+| 3 | **Anomaly alerts** | Z-score breaches on the daily series | `/insights/alerts` |
+| 4 | **Persona-tailored narrative** | Claude Sonnet briefing on pre-computed KPIs | `/insights/narrative?persona=ops` |
+| 5 | **Risky-seller drill-down** | Composite risk score + late-delivery prob | `agg_seller_scorecard`, XGBoost |
+| 6 | **Data health + ingest** | Source registry, freshness, dbt test status | `/data-health`, `/ingest/*` |
+| 7 | **Governance + audit** | Mark as Reviewed → audit log → decision journal | `governance.audit_log`, `governance.review_decisions` |
+
+Every surface honors the non-negotiable rule: **the LLM is a narrator, never
+a calculator.** Numbers come from `gold.*`; the LLM only writes English.
 
 ---
 
@@ -16,8 +51,8 @@ Next.js stack.
 |---|---|---|
 | Data pipeline | PostgreSQL + dbt Core (medallion: bronze → silver → gold) | ✅ working, dbt tests defined inline in `_stg__models.yml` / `_marts__models.yml` / `sources.yml` |
 | API | FastAPI, 12 endpoints | ✅ working |
-| ML — late delivery | XGBoost classifier, ROC-AUC ≈ 0.83 (per training run) | ✅ trained, model in `ml/models/` |
-| ML — forecast | Holt-Winters, MAPE ≈ 14% (orders) | ✅ trained |
+| ML — late delivery | XGBoost classifier, ROC-AUC ≈ 0.82 ; F1 = 0.38 disclosed in [model card](docs/model_card.md) | ✅ trained, model in `ml/models/` |
+| ML — forecast | Holt-Winters, sMAPE ≈ 13% / MAPE ≈ 14% (orders, floored) | ✅ trained — eval bug fixed, see [model card](docs/model_card.md#the-mape--259262-caveat) |
 | Text-to-SQL | Anthropic Claude (preferred) / OpenAI GPT-4o (fallback) + semantic layer | ✅ working |
 | Narrative generation | LLM + Self-Critique fact-check | ✅ working |
 | Anomaly alerts | Z-score on daily KPIs | ✅ working |
@@ -162,6 +197,9 @@ Why we chose what we chose, and what we ruled out:
 - [ADR-003 — No Kafka, no Spark, no Airflow, no LangChain](docs/adr/003-no-kafka-no-spark.md)
 - [ADR-004 — Olist-only scope (cut DataCo + Budget vs Actual)](docs/adr/004-single-dataset-scope.md)
 - [ADR-005 — Postgres as runtime store, DuckDB optional](docs/adr/005-postgres-not-duckdb-runtime.md)
+- [ADR-006 — AWS as primary deploy, Render as kill-switch](docs/adr/006-aws-over-render.md)
+- [ADR-007 — Dagster for orchestration](docs/adr/007-dagster-orchestration.md)
+- [ADR-008 — Tool-based agent pattern](docs/adr/008-tool-based-agent-pattern.md)
 
 ---
 
@@ -180,6 +218,23 @@ Tests are split by marker:
   `test_llm_client.py`) and FastAPI smoke (`test_app_smoke.py`). No DB, no LLM.
 - **`integration`** — needs a live Postgres with the Gold schema loaded.
 - **`llm`** — hits a real provider; never run in CI.
+
+---
+
+## Honest disclosure
+
+See the [model card](docs/model_card.md) for full ML performance, training
+scope, and disallowed uses. Headlines:
+
+- **Late-delivery classifier**: ROC-AUC ≈ 0.82, but F1 = 0.38 at threshold 0.5.
+  Class imbalance — we ship a probability gauge, not a hard label. The UI
+  threshold is set to 0.30.
+- **Forecast**: previous MAPE = 259 262% was an eval-window bug (division
+  by near-zero warm-up days). Fixed; current run reports sMAPE ≈ 13%, MAE
+  ≈ 22 orders/day, MAPE floored at the 1-order denominator. Tests in
+  [ml/tests/test_forecast_metrics.py](ml/tests/test_forecast_metrics.py).
+- **LLM**: every output is auditable via `governance.audit_log`. No raw
+  Bronze rows ever reach the model.
 
 ---
 

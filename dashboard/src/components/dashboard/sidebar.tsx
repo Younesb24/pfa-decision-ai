@@ -10,7 +10,6 @@ import {
   MessageSquare,
   Settings,
   Sparkles,
-  TrendingUp,
   Truck,
   Upload,
   Users,
@@ -31,7 +30,6 @@ const PRIMARY: NavItem[] = [
   { id: "operations", label: "Operations", icon: Activity },
   { id: "logistics", label: "Logistics", icon: Truck },
   { id: "sellers", label: "Sellers", icon: Users },
-  { id: "forecast", label: "Forecast", icon: TrendingUp },
   { id: "alerts", label: "Anomalies", icon: Bell, badge: "•" },
 ];
 

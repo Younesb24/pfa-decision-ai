@@ -58,16 +58,46 @@ PERSONA_FRAMING: dict[str, dict[str, str]] = {
 }
 
 
-NARRATIVE_SYSTEM_TEMPLATE = """You are a senior business analytics consultant for Olist, a Brazilian e-commerce marketplace.
-You write executive-level insights for the {role}. Focus on: {focus}. Tone: {tone}.
+NARRATIVE_SYSTEM_TEMPLATE = """You are a decision analyst for Olist, a Brazilian e-commerce marketplace.
+You write decision briefs for the {role}. Focus on: {focus}. Tone: {tone}.
 
-Rules:
-1. NEVER invent numbers — only reference numbers that appear in the data context below
-2. Highlight anomalies and trends explicitly
-3. Provide 2-3 actionable recommendations matched to this persona
-4. Use markdown: bold for KPIs, bullet points for actions
-5. Keep it under 300 words
-6. Reference Brazilian-market context when relevant
+You are a narrator, never a calculator. Every number in your brief MUST come
+verbatim from the data context the user provides. Do not compute, estimate, or
+infer numbers. The numeric facts are already trusted upstream.
+
+Your brief MUST follow this exact structure with these exact headings:
+
+**What changed**
+One or two sentences naming the most important shift in the window —
+prefer a comparison ("OTIF fell from X% to Y%") over a single static number.
+If nothing material changed, say so explicitly.
+
+**Why it matters**
+One sentence connecting the shift to a business outcome the persona cares
+about — revenue, customer trust, operational cost, marketplace health.
+
+**Evidence**
+2–3 short bullet points, each citing a specific number from the data context
+and naming the seller/category/region/period it refers to. Do not restate the
+full KPI table — only cite what supports the decision.
+
+**Recommended action**
+ONE concrete action a human can take this week. Name a specific subject
+(seller id, category, region) when possible. Avoid generic verbs like
+"investigate" or "monitor" unless paired with a specific target.
+
+**Limitation**
+One sentence on what this brief is not — e.g. "this brief reflects historical
+KPIs; the late-delivery model would refine seller-specific risk." Keep it
+honest, not promotional.
+
+Hard constraints:
+- Markdown only. Headings exactly as written above, bold.
+- Under 200 words total.
+- Never use the phrases "root cause analysis", "enhance collaboration",
+  "leverage", "synergies", or other consulting filler.
+- Never invent a seller id, category name, or number that isn't in the
+  data context.
 """
 
 
@@ -266,34 +296,77 @@ def _self_critique(narrative: str, ctx: dict) -> dict:
 
 
 def _template_narrative(persona: Persona, ctx: dict) -> str:
+    """Fallback briefing rendered without an LLM. Mirrors the structured
+    decision format the LLM is asked to produce so the surface is consistent
+    whether or not ANTHROPIC_API_KEY / OPENAI_API_KEY is set."""
     s = ctx.get("summary", {})
     t = ctx.get("trend", {})
     n = ctx.get("nps", {})
+    risky = ctx.get("top_risky_sellers", [])
+    top = risky[0] if risky else {}
+
     otif = float(s.get("otif_rate") or 0)
-    otif_status = "**on track**" if otif >= 92 else "**below target**"
+    on_target = otif >= 92
     role = PERSONA_FRAMING[persona]["role"]
+
+    # Build the "what changed" line from the trend block if both windows exist.
+    otif_change = ""
+    if t.get("recent_otif") is not None and t.get("prior_otif") is not None:
+        r_otif, p_otif = float(t["recent_otif"]), float(t["prior_otif"])
+        delta = r_otif - p_otif
+        otif_change = f"OTIF moved from {p_otif:.1f}% to {r_otif:.1f}% ({delta:+.1f} pts)."
+    else:
+        otif_change = f"OTIF at {otif:.1f}% (target ≥ 92%)."
 
     gmv_change = ""
     if t.get("recent_avg_gmv") and t.get("prior_avg_gmv"):
         r, p = float(t["recent_avg_gmv"]), float(t["prior_avg_gmv"])
         if p > 0:
             pct = ((r - p) / p) * 100
-            gmv_change = f"{'+' if pct > 0 else ''}{pct:.1f}% vs prior 30 days"
+            gmv_change = f"Daily GMV {pct:+.1f}% vs the prior equal-length window."
 
-    return f"""## Olist — Briefing for {role}
+    why = (
+        "OTIF below target erodes customer trust and increases refund exposure."
+        if not on_target
+        else "Operational metrics within target — focus shifts to retention quality."
+    )
 
-**Revenue:** R${float(s.get('total_revenue', 0)):,.0f} across **{s.get('total_orders', 0):,}** orders (AOV: R${float(s.get('aov', 0)):.0f}). {gmv_change}
+    sid_short = str(top.get("seller_id", ""))[:8] if top else ""
+    seller_evidence = (
+        f"- Riskiest seller: `{sid_short}...` with late rate "
+        f"{top.get('late_delivery_rate', 'N/A')}% and composite risk "
+        f"{top.get('seller_risk_score', 'N/A')}."
+        if top
+        else "- No risky seller detected in this window."
+    )
 
-**OTIF Rate:** {otif:.1f}% — {otif_status} (target ≥ 92%).
+    action = (
+        f"Contact seller `{sid_short}...` this week — late rate "
+        f"{top.get('late_delivery_rate', 'N/A')}% is well above the marketplace baseline."
+        if top and not on_target
+        else "Hold operational changes for this window — no urgent intervention."
+    )
 
-**Customer satisfaction:** Avg review {n.get('avg_score', 'N/A')}/5.0; {n.get('detractor_pct', 'N/A')}% detractors.
+    return f"""## Decision brief — {role}
 
-**Cancellation rate:** {s.get('cancel_rate', 'N/A')}%.
+**What changed**
+{otif_change} {gmv_change}
 
-### Recommended actions
-- {"Investigate top late-delivery sellers" if otif < 92 else "Maintain current logistics performance"}
-- Monitor seller risk scorecard weekly for early intervention
-- Track detractor reviews for product quality issues
+**Why it matters**
+{why}
+
+**Evidence**
+- Window totals: {s.get('total_orders', 0):,} orders, R${float(s.get('total_revenue', 0)):,.0f} GMV, AOV R${float(s.get('aov', 0)):.0f}.
+- Customer signal: avg review {n.get('avg_score', 'N/A')}/5.0 with {n.get('detractor_pct', 'N/A')}% detractors.
+{seller_evidence}
+
+**Recommended action**
+{action}
+
+**Limitation**
+This brief is generated from historical KPIs. To rank specific sellers by
+forward-looking risk, open the seller scorecard and click a row to run the
+XGBoost late-delivery model.
 """
 
 

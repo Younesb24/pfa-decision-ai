@@ -1,6 +1,6 @@
 """
 PFA Decision AI — FastAPI Backend
-Serves KPIs, forecasts, anomalies, and LLM-powered insights
+Serves KPIs, anomalies, late-delivery predictions, and LLM-powered insights
 from the Gold layer of the Olist data warehouse.
 """
 

@@ -40,13 +40,6 @@ export interface SellerScore {
   seller_risk_score: number;
 }
 
-export interface Forecast {
-  orders: { month: string; value: number }[];
-  revenue: { month: string; value: number }[];
-  orders_mape: number;
-  revenue_mape: number;
-}
-
 export interface AnomalyAlert {
   metric: string;
   date: string;
@@ -147,4 +140,34 @@ export interface ReviewResult {
   recorded: boolean;
   review_id: number | null;
   generated_at: string;
+}
+
+/** Late delivery prediction — XGBoost classifier per seller. */
+export interface FactorContribution {
+  feature: string;
+  label: string;
+  value: number;
+  contribution_pct: number;
+  direction: "increases" | "decreases";
+}
+
+export interface LateDeliveryPrediction {
+  seller_id: string;
+  probability: number;
+  threshold: number;
+  predicted_late: boolean;
+  /** Forward-looking: probability that a typical NEXT order is late. */
+  risk_label: "low" | "medium" | "high";
+  /** Backward-looking: derived from the scorecard composite. */
+  historical_risk_label: "low" | "medium" | "high";
+  seller_context: {
+    state: string | null;
+    total_orders: number;
+    late_delivery_rate_pct: number;
+    avg_review_score: number;
+    seller_risk_score: number;
+  };
+  top_factors: FactorContribution[];
+  recommendation: string;
+  model: { name: string; n_features: number; threshold: number };
 }

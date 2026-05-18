@@ -5,8 +5,8 @@ import type {
   AnomalyAlert,
   AskResult,
   DailyKPI,
-  Forecast,
   KPISummary,
+  LateDeliveryPrediction,
   ReplayState,
   ReviewDecision,
   ReviewResult,
@@ -89,11 +89,6 @@ export async function fetchSellers(limit = 10, minOrders = 30): Promise<SellerSc
   return res.data || [];
 }
 
-export async function fetchForecast(): Promise<Forecast | null> {
-  const res = await fetchJson<{ data: Forecast }>(`${API_BASE}/ml/forecast`);
-  return res.data || null;
-}
-
 export async function fetchCategories(topN = 8): Promise<Record<string, unknown>[]> {
   const res = await fetchJson<{ data: Record<string, unknown>[] }>(
     `${API_BASE}/kpi/revenue-by-category?top_n=${topN}`,
@@ -101,9 +96,18 @@ export async function fetchCategories(topN = 8): Promise<Record<string, unknown>
   return res.data || [];
 }
 
-export async function fetchMlMetrics(): Promise<Record<string, unknown> | null> {
-  const res = await fetchJson<{ data: Record<string, unknown> }>(`${API_BASE}/ml/metrics`);
-  return res.data || null;
+export async function predictLateDelivery(
+  sellerId: string,
+  customerState?: string,
+): Promise<LateDeliveryPrediction> {
+  return fetchJson<LateDeliveryPrediction>(`${API_BASE}/ml/predict/late-delivery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      seller_id: sellerId,
+      customer_state: customerState ?? null,
+    }),
+  });
 }
 
 export async function fetchNarrative(range?: DateRange, persona = "ops"): Promise<string | null> {

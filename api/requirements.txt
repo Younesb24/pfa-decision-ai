@@ -6,6 +6,12 @@ anthropic>=0.39
 openai>=1.0
 python-dotenv>=1.0
 joblib>=1.3
+# ML runtime — required to deserialize the XGBoost late-delivery classifier
+# saved by ml/train_late_delivery.py. scikit-learn is pulled in as an implicit
+# dependency of XGBClassifier and provides the feature-vector machinery.
+xgboost>=2.0
+scikit-learn>=1.4
+numpy>=1.26
 bcrypt>=4.1
 PyJWT>=2.8
 python-multipart>=0.0.9

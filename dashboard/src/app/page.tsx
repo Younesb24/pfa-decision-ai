@@ -51,15 +51,14 @@ import { KpiTile, KPI_TONES } from "@/components/dashboard/kpi-tile";
 import { Panel } from "@/components/dashboard/panel";
 import { AnomalyCard } from "@/components/dashboard/anomaly-card";
 import { DecisionBriefCard } from "@/components/dashboard/decision-brief-card";
+import { SellerPredictionModal } from "@/components/dashboard/seller-prediction-modal";
 import {
   askDecisionAnalyst,
   askQuestion,
   fetchAlerts,
   fetchCategories,
   fetchDailyKpis,
-  fetchForecast,
   fetchKpiSummary,
-  fetchMlMetrics,
   fetchNarrative,
   fetchReplayState,
   fetchSellers,
@@ -70,7 +69,6 @@ import type {
   AskResult,
   DailyKPI,
   DecisionBrief,
-  Forecast,
   KPISummary,
   ReplayState,
   SellerScore,
@@ -145,9 +143,7 @@ export default function Dashboard() {
   const [kpi, setKpi] = useState<KPISummary | null>(null);
   const [daily, setDaily] = useState<DailyKPI[]>([]);
   const [sellers, setSellers] = useState<SellerScore[]>([]);
-  const [forecast, setForecast] = useState<Forecast | null>(null);
   const [categories, setCategories] = useState<Record<string, unknown>[]>([]);
-  const [mlMetrics, setMlMetrics] = useState<Record<string, unknown> | null>(null);
   const [narrative, setNarrative] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<AnomalyAlert[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,8 +151,9 @@ export default function Dashboard() {
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [briefResult, setBriefResult] = useState<DecisionBrief | null>(null);
   const [askLoading, setAskLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"overview" | "operations" | "logistics" | "sellers" | "forecast" | "alerts" | "ask" | "narratives" | "data" | "settings">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "operations" | "logistics" | "sellers" | "alerts" | "ask" | "narratives" | "data" | "settings">("overview");
   const [replayState, setReplayState] = useState<ReplayState | null>(null);
+  const [selectedSellerId, setSelectedSellerId] = useState<string | null>(null);
 
   // Shared time range — drives /kpi/summary + /kpi/daily + /insights/*.
   const rangeStart = useTimeRange((s) => s.start);
@@ -167,16 +164,12 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        const [s, f, c, m] = await Promise.all([
+        const [s, c] = await Promise.all([
           fetchSellers(),
-          fetchForecast(),
           fetchCategories(),
-          fetchMlMetrics(),
         ]);
         setSellers(s);
-        setForecast(f);
         setCategories(c);
-        setMlMetrics(m);
       } catch (e) {
         console.error(e);
       }
@@ -262,7 +255,6 @@ export default function Dashboard() {
     operations: "kpis",
     logistics: "trend",
     sellers: "sellers",
-    forecast: "forecast",
     alerts: "alerts",
     narratives: "briefing",
     ask: { focus: "ask-input" },
@@ -323,8 +315,6 @@ export default function Dashboard() {
     };
   }, [daily]);
 
-  const ml = mlMetrics as Record<string, Record<string, number>> | null;
-
   /* ─── Loading screen ─── */
   if (loading) {
     return (
@@ -351,22 +341,12 @@ export default function Dashboard() {
     );
   }
 
-  /* ─── Status pills ─── */
-  // Hide ROC-AUC / MAPE pills entirely when /ml/metrics returns empty
-  // (no trained models yet). Showing "—" / "—%" looks like a broken UI;
-  // omitting the pills makes the top bar honest.
-  const rocAuc =
-    ml && ml.late_delivery && typeof ml.late_delivery.roc_auc === "number"
-      ? ml.late_delivery.roc_auc.toFixed(2)
-      : null;
-  const mape =
-    ml && ml.forecast && typeof ml.forecast.mape === "number"
-      ? `${ml.forecast.mape}%`
-      : null;
-
+  /* ─── Status pills ───
+   * ROC-AUC lives in the Seller Prediction modal footer and on /data-health.
+   * Surfacing a model-evaluation metric next to the Ask Bar reads like a
+   * student project, not a product — it stays out of the operational header.
+   */
   const statusPills = [
-    rocAuc != null && { label: "ROC-AUC", value: rocAuc, tone: "info" as const },
-    mape != null && { label: "MAPE", value: mape, tone: "info" as const },
     {
       label: "Anomalies",
       value: alerts.length.toString(),
@@ -431,10 +411,9 @@ export default function Dashboard() {
               Marketplace Decision Cockpit
             </h1>
             <p className="mt-1.5 text-sm text-muted-foreground max-w-xl">
-              AI decision support for the Head of E-commerce Ops — live
-              replay-fed KPIs, z-score anomaly detection, persona-aware
-              narratives, predictive late-delivery risk, Holt-Winters
-              forecasting, and audited human review.
+              AI decision support for the Head of E-commerce Ops — predictive
+              seller delivery risk (XGBoost) and natural-language KPI
+              investigation (LLM), grounded on a dbt medallion warehouse.
             </p>
           </div>
         </div>
@@ -830,85 +809,8 @@ export default function Dashboard() {
           </Panel>
         </div>
 
-        {/* ───────── FORECAST + SELLER RISK ───────── */}
-        <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 mb-5">
-          {forecast && (
-            <Panel
-              id="forecast"
-              title="3-Month Forecast"
-              description="Holt-Winters exponential smoothing"
-              icon={<TrendingUp className="h-3.5 w-3.5 text-primary" strokeWidth={2.2} />}
-              tag={
-                <span className="tabular inline-flex items-center gap-1 rounded-md bg-[color:var(--success)]/10 px-1.5 py-0.5 text-[0.6rem] font-medium text-[color:var(--success)] ring-1 ring-inset ring-[color:var(--success)]/30">
-                  <Zap className="h-2.5 w-2.5" strokeWidth={2.5} />
-                  MAPE {forecast.orders_mape}%
-                </span>
-              }
-              delay="animate-fade-up-4"
-              contentClassName="px-3 py-3"
-            >
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart
-                  data={forecast.orders.map((o, i) => ({
-                    month: o.month,
-                    orders: Math.round(o.value),
-                    revenue: Math.round(forecast.revenue[i]?.value || 0),
-                  }))}
-                  margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="2 4" stroke="oklch(0.965 0.005 240 / 0.05)" vertical={false} />
-                  <XAxis
-                    dataKey="month"
-                    tick={{ fill: "oklch(0.55 0.02 240)", fontSize: 11 }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    yAxisId="left"
-                    tick={{ fill: "oklch(0.55 0.02 240)", fontSize: 10 }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={40}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fill: "oklch(0.55 0.02 240)", fontSize: 10 }}
-                    tickFormatter={(v: number) => fmtK(v)}
-                    axisLine={false}
-                    tickLine={false}
-                    width={48}
-                  />
-                  <RTooltip
-                    cursor={{ fill: "oklch(0.965 0.005 240 / 0.05)" }}
-                    formatter={(v) => fmt(typeof v === "number" ? v : Number(v))}
-                  />
-                  <Legend
-                    iconType="circle"
-                    iconSize={6}
-                    wrapperStyle={{ fontSize: "0.65rem", paddingTop: 8 }}
-                  />
-                  <Bar
-                    yAxisId="left"
-                    dataKey="orders"
-                    fill={C.sky}
-                    radius={[4, 4, 0, 0]}
-                    name="Orders"
-                    barSize={28}
-                  />
-                  <Bar
-                    yAxisId="right"
-                    dataKey="revenue"
-                    fill={C.emerald}
-                    radius={[4, 4, 0, 0]}
-                    name="Revenue (BRL)"
-                    barSize={28}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </Panel>
-          )}
-
+        {/* ───────── SELLER RISK ───────── */}
+        <div className="grid gap-3 grid-cols-1 mb-5">
           <Panel
             id="sellers"
             title="Seller Risk Scorecard"
@@ -937,7 +839,9 @@ export default function Dashboard() {
                   {sellers.map((s) => (
                     <TableRow
                       key={s.seller_id}
-                      className="hover:bg-[color:var(--surface-2)] border-border/40 transition-colors"
+                      onClick={() => setSelectedSellerId(s.seller_id)}
+                      className="cursor-pointer hover:bg-[color:var(--surface-2)] border-border/40 transition-colors"
+                      title="Click to run XGBoost late-delivery prediction"
                     >
                       <TableCell className="font-mono text-[0.7rem] text-muted-foreground">
                         {s.seller_id.slice(0, 8)}…
@@ -1003,6 +907,12 @@ export default function Dashboard() {
           </div>
         </footer>
       </main>
+
+      <SellerPredictionModal
+        open={selectedSellerId !== null}
+        sellerId={selectedSellerId}
+        onClose={() => setSelectedSellerId(null)}
+      />
     </div>
   );
 }
